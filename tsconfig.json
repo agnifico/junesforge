@@ -1,0 +1,21 @@
+{
+	"extends": "./.svelte-kit/tsconfig.json",
+	"compilerOptions": {
+		"allowJs": true,
+		"checkJs": false,
+		"esModuleInterop": true,
+		"forceConsistentCasingInFileNames": true,
+		"resolveJsonModule": true,
+		"skipLibCheck": true,
+		"sourceMap": true,
+		"strict": true,
+		"moduleResolution": "bundler"
+	}
+	// checkJs is off on purpose: the pre-existing site is plain JS and wasn't
+	// written with type-checking in mind. New/ported .ts files (Propsize) are
+	// still fully strict-checked. Flip checkJs on later if you want to type
+	// the legacy JS too.
+	//
+	// Path aliases are handled by https://svelte.dev/docs/kit/configuration#alias
+	// except $lib which is handled by https://svelte.dev/docs/kit/configuration#files
+}

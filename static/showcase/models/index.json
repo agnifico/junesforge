@@ -1,0 +1,52 @@
+[
+  {
+    "slug": "the-gilded-boar-inn",
+    "name": "The Gilded Boar Inn",
+    "parts": 77
+  },
+  {
+    "slug": "blacksmith-s-forge",
+    "name": "Blacksmith's Forge",
+    "parts": 57
+  },
+  {
+    "slug": "garrison-post",
+    "name": "Garrison Post",
+    "parts": 56
+  },
+  {
+    "slug": "timber-stable",
+    "name": "Timber Stable",
+    "parts": 52
+  },
+  {
+    "slug": "city-gatehouse",
+    "name": "City Gatehouse",
+    "parts": 85
+  },
+  {
+    "slug": "watchtower",
+    "name": "Watchtower",
+    "parts": 56
+  },
+  {
+    "slug": "market-fountain",
+    "name": "Market Fountain",
+    "parts": 60
+  },
+  {
+    "slug": "palisade-kit",
+    "name": "Palisade Kit",
+    "parts": 94
+  },
+  {
+    "slug": "dovecote",
+    "name": "Dovecote",
+    "parts": 72
+  },
+  {
+    "slug": "justice-corner",
+    "name": "Justice Corner",
+    "parts": 54
+  }
+]

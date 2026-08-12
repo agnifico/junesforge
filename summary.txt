@@ -1,0 +1,93 @@
+Website Summary: Portfolio Project
+
+This document summarizes the structure, components, and key features implemented in the 'portfolio' SvelteKit project. The project aims to create an interactive portfolio website with a retro handheld console aesthetic, drawing inspiration from 'delta' (vanilla JS) and 'portfolio_v2' (SvelteKit) reference projects.
+
+---
+
+1.  Project Overview:
+    *   Base Project: 'portfolio' (SvelteKit)
+    *   Reference Projects: 'delta' (for animations like the 3D cube) and 'portfolio_v2' (for console UI/UX and data-driven navigation patterns).
+
+---
+
+2.  Main Pages/Routes:
+
+    *   `/` (Main Page - src/routes/+page.svelte):
+        *   Serves as the primary entry point and orchestrates the overall layout and animations.
+        *   Contains the Hero Section, Rotating Cube animation, and the main Console UI.
+
+    *   `/projects/forge-blueprints` (Project Page - src/lib/screens/projects/ForgeBlueprints.svelte):
+        *   A dedicated screen for the "Forge Blueprints" project, accessible via the console's Projects menu.
+        *   Designed for rich content display (images, text).
+
+---
+
+3.  Core Components & Features:
+
+    a.  src/routes/+page.svelte (Main Page Structure):
+        *   Hero Section:
+            *   Displays a welcome message, "Jxnesforge" title, and a subtitle.
+            *   Features GSAP animations for text entry and a "logo relay" effect where the hero logo falls/shrinks as the navbar logo drops in.
+        *   Rotating Cube: Integrates the <RotatingCube /> component on its own dedicated slide.
+        *   Console Top (div.console-top):
+            *   Houses the dynamic screen display (<svelte:component>).
+            *   Contains the D-pad and A/B action buttons (div.controls-main).
+            *   Includes a global back button (button.back-button) with conditional visibility and responsive positioning (bottom-left on desktop, bottom-right on mobile for specific screens).
+        *   Console Bottom (div.console-bot):
+            *   Visual elements like "fold" divs, a "logo-circle", and "dual-speaker" sections.
+            *   A scrollable "screen2" displaying "Miscellaneous Skills" (misctab items).
+
+    b.  src/lib/screens/ (Console Screen Components):
+        *   Menu.svelte:
+            *   The main console menu, displaying "Graphic Design", "Web Dev", "Projects".
+            *   Features data-driven navigation, a highlight effect with text/arrow translation, underline, and clickability.
+            *   Uses 'Silkscreen' font for a retro aesthetic.
+        *   GraphicDesign.svelte:
+            *   Displays content for the Graphic Design section.
+            *   Utilizes a responsive Flexbox layout (left/right columns on desktop, top/bottom on mobile).
+            *   Includes a mobile-only down-arrow scroll indicator.
+            *   Features a back button (bottom-left desktop, bottom-right mobile).
+        *   WebDesign.svelte:
+            *   Content for the Web Design section, mirroring the layout and features of GraphicDesign.svelte.
+            *   Includes a mobile-only down-arrow scroll indicator.
+            *   Features a back button (bottom-left desktop, bottom-right mobile).
+        *   Projects.svelte:
+            *   Functions as a full-screen, scrollable menu for individual project entries.
+            *   Features data-driven navigation, highlight effect, and clickability.
+            *   Includes a back button (bottom-left on all screen sizes).
+        *   src/lib/screens/projects/ForgeBlueprints.svelte:
+            *   The first dedicated project page.
+            *   Displays a series of images (forge-scimitar, forge-shield, forge-spear) each with a lorem ipsum caption.
+            *   Images are centered and scale nicely.
+            *   Includes a back button (bottom-left on all screen sizes).
+
+    c.  src/lib/animations/ (Animation Components):
+        *   RotatingCube.svelte:
+            *   A self-contained Svelte component implementing a complex 3D rotating cube animation.
+            *   Animation is purely CSS-driven using @keyframes and transform properties.
+            *   Includes all necessary HTML and CSS (with fallbacks for undefined CSS variables).
+
+    d.  src/lib/ (Utility/Data Files):
+        *   console-store.js:
+            *   A Svelte store managing global console state: `currentScreenId`, `menuHighlightedIndex`, `projectsLinkIndex`, and `isVideoBackgroundOn` (for background video toggle).
+        *   console-map.js:
+            *   The central data-driven navigation map.
+            *   Defines all console screens, their associated Svelte components, and the control logic (what each D-pad/A/B button does on that screen).
+            *   Contains `menuItems` and `projectItems` data.
+        *   BgVideo.svelte:
+            *   A simple Svelte component for a looping, grayscale background video.
+            *   Its visibility is controlled by the `isVideoBackgroundOn` store variable.
+
+---
+
+4.  Key Features Implemented:
+    *   Data-driven console navigation system for easy scalability and maintainability.
+    *   Responsive design for console screens and controls, adapting to mobile layouts.
+    *   Interactive GSAP animations for hero section elements and menu highlighting.
+    *   Complex CSS 3D animation integrated as a reusable component.
+    *   Toggleable background video for design comparison.
+    *   Consistent back button functionality across various console screens.
+
+---
+
+This summary provides a high-level overview of the project's current state and the architectural decisions made during its development.

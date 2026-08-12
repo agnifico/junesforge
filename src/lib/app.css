@@ -1,0 +1,169 @@
+:root {
+	--main: #21715e;
+	--secondary: #722b2b;
+	--light-gold: #A39B8E;
+    --gold: #A59271;
+    --silver: #747474;
+    --vibranium: #1D2021;
+    --mythril: #A39B8E;
+    --malachite: #007C77;
+    --amethyst: #543B4B;
+}
+
+.navbar {
+	position: absolute;
+	top: 0;
+	height: 3.5rem;
+	font-size: 2rem;
+	font-family: 'Fira Code';
+	font-weight: 600;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	padding-top: 4rem;
+	width: 100%;
+	z-index: 2;
+}
+
+#logo {
+	position: relative;
+	aspect-ratio: initial;
+	height: 60px;
+	filter: brightness(.75);
+
+	&:hover {
+		filter: brightness(0) grayscale() invert();
+	}
+}
+
+.container {
+	flex-basis: 50%;
+	height: 100dvh;
+	overflow-y: scroll;
+	overflow-x: hidden;
+	scroll-snap-type: mandatory;
+	scroll-snap-type: y mandatory;
+	/* background-color: #2d283a; */
+	/* background-color: #26322c; */
+	/* background-color: #313131; */
+	scrollbar-width: none;
+	z-index: 0;
+}
+
+.page-slide {
+	position: relative;
+	height: 100dvh;
+	width: 100dvw;
+	scroll-snap-align: start;
+	display: flex;
+	flex-direction: column;
+	z-index: 1;
+	/* box-sizing: border-box; */
+}
+
+.console-top {
+	position: relative;
+	z-index: 2;
+	max-width: 700px;
+	height: 70vh;
+	width: clamp(50%, 75%, 80%);
+	margin: auto;
+	margin-bottom: 0;
+	background-color: #cccccc;
+	display: flex;
+	flex-direction: column;
+	padding-top: 3rem;
+	padding-bottom: 1rem;
+	z-index: 3;
+	border-radius: 40px 40px 0 0;
+	border: none;
+	/* overflow: hidden; */
+	box-shadow:
+		rgba(0, 0, 0, 0.4) 0px -10px 25px 0px inset,
+		rgba(0, 0, 0, 0.4) 0px -20px 30px 0px inset,
+		rgba(0, 0, 0, 0.2) 0px -30px 40px 0px inset,
+		rgba(0, 0, 0, 0.4) 10px 0px 30px 0px inset,
+		rgba(0, 0, 0, 0.4) -10px 0px 30px 0px inset,
+		rgba(0, 0, 0, 0.1) 0px 2px 1px,
+		rgba(0, 0, 0, 0.2) 0px 4px 2px,
+		rgba(0, 0, 0, 0.2) 0px 8px 4px,
+		rgba(0, 0, 0, 0.2) 0px 16px 8px,
+		rgba(0, 0, 0, 0.2) 0px 32px 16px;
+}
+
+.console-bot {
+	z-index: 2;
+	position: relative;
+	margin: auto;
+	margin-top: 0;
+	height: 400px;
+	max-width: 700px;
+	width: clamp(50%, 75%, 80%);
+	padding-bottom: 2rem;
+	background-color: #cccccc;
+	border: 2px solid #3a3a3a;
+	align-items: center;
+	justify-content: center;
+	/* z-index: 1; */
+	/* bottom: auto; */
+	padding-top: 0rem;
+	border-radius: 0 0 40px 40px;
+	border: none;
+	box-shadow:
+		rgba(0, 0, 0, 0.4) 0px -23px 25px 0px inset,
+		rgba(0, 0, 0, 0.3) 0px -36px 30px 0px inset,
+		rgba(0, 0, 0, 0.2) 0px -79px 40px 0px inset,
+		rgba(0, 0, 0, 0.1) 0px 2px 1px,
+		rgba(0, 0, 0, 0.2) 0px 4px 2px,
+		rgba(0, 0, 0, 0.2) 0px 8px 4px,
+		rgba(0, 0, 0, 0.2) 0px 16px 8px,
+		rgba(0, 0, 0, 0.2) 0px 32px 16px;
+}
+
+
+.screen {
+	z-index: 3;
+	position: relative;
+	overflow: hidden;
+	width: 90%;
+	height: 40vh;
+	margin: 1rem auto 0;
+	/* padding: 1rem; */
+	background-color: #383838;
+	border-radius: 20px;
+	box-shadow:
+		var(--main) 0px 0px 0px 4px,
+		rgba(6, 24, 44, 0.65) 0px 8px 12px -1px,
+		rgba(255, 255, 255, 0.1) 0px 6px 0px inset,
+		rgba(0, 0, 0, 0.4) 0px 8px 4px,
+		rgba(0, 0, 0, 0.3) 0px 7px 13px -3px,
+		rgba(0, 0, 0, 0.3) 0px -6px 0px inset;
+}
+
+.sc-text {
+	font-size: 1rem;
+	color: #cacaca;
+	font-family: 'Ubuntu Mono';
+
+	.red {
+		color: #d88383;
+	}
+
+	.green {
+		color: #44c6a7;
+	}
+}
+
+@font-face {
+	font-family: 'Dogica Pixel';
+	src: url('/fonts/dogicapixel.otf') format('opentype');
+	font-weight: normal;
+	font-style: normal;
+  }
+  
+  @font-face {
+	  font-family: 'DePixel';
+	  src: url('/fonts/DePixelKlein.otf') format('opentype');
+	  font-weight: normal;
+	  font-style: normal;
+	}

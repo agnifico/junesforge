@@ -247,6 +247,10 @@ export function normalizeDoc(input: unknown): NormalizeResult | null {
 
 		if (kind === 'imported') {
 			const stats = isObj(raw.stats) ? raw.stats : {};
+			const part =
+				isObj(raw.part) && typeof raw.part.name === 'string'
+					? { index: num(raw.part.index, 0), name: raw.part.name, center: vec3(raw.part.center, { x: 0, y: 0, z: 0 }) }
+					: null;
 			nodes.push({
 				...base,
 				kind: 'imported',
@@ -254,7 +258,8 @@ export function normalizeDoc(input: unknown): NormalizeResult | null {
 				materialOverride: typeof raw.materialOverride === 'string' ? raw.materialOverride : null,
 				castShadow: bool(raw.castShadow, true),
 				receiveShadow: bool(raw.receiveShadow, true),
-				stats: { meshes: num(stats.meshes, 0), triangles: num(stats.triangles, 0) }
+				stats: { meshes: num(stats.meshes, 0), triangles: num(stats.triangles, 0) },
+				part
 			});
 			continue;
 		}

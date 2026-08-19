@@ -11,7 +11,7 @@
 	import { onDestroy } from 'svelte';
 	import * as THREE from 'three';
 	import { SimpleOrbitControls } from '$lib/propsize/core/orbit-controls';
-	import { importModel } from '$lib/propsize/import/loaders';
+	import { importModel, listImportParts } from '$lib/propsize/import/loaders';
 	import { disposeTree } from '$lib/propsize/core/three-utils';
 	import { libraryStore } from '$lib/propsize/library/library-store.svelte';
 	import type { LibraryEntry } from '$lib/propsize/library/fs';
@@ -26,6 +26,9 @@
 	let model: THREE.Object3D | null = null;
 	let raf = 0;
 	let token = 0;
+	/** > 1 hints that this import could come in as separate objects — see
+	 *  import-flow.ts's split prompt, offered once it's actually added. */
+	let partsCount = $state(0);
 
 	function teardown() {
 		token++;
@@ -51,6 +54,7 @@
 		teardown();
 		const mine = ++token;
 		status = 'loading';
+		partsCount = 0;
 
 		let cancelled = false;
 		(async () => {
@@ -61,6 +65,7 @@
 					disposeTree(result.object);
 					return;
 				}
+				partsCount = listImportParts(result.object).length;
 
 				const scene = new THREE.Scene();
 				scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2.2));
@@ -120,5 +125,8 @@
 			{status === 'loading' ? 'Loading preview…' : 'No preview available'}
 		</div>
 	{/if}
-	<div class="lib-preview-caption">{entry.name}<span>drag to orbit · scroll to zoom</span></div>
+	<div class="lib-preview-caption">
+		{entry.name}{partsCount > 1 ? ` · ${partsCount} objects` : ''}
+		<span>drag to orbit · scroll to zoom</span>
+	</div>
 </div>

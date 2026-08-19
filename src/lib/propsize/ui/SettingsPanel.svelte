@@ -44,6 +44,81 @@
 	</div>
 
 	<div class="pop-sec">
+		<div class="pop-head"><span>Lighting</span></div>
+		<div class="pop-row">
+			<span class="pop-label">Key light</span>
+			<input
+				class="pop-color"
+				type="color"
+				value={editorStore.lightColor}
+				oninput={(e) => {
+					engine.setLightColor((e.currentTarget as HTMLInputElement).value);
+					editorStore.persistSettings();
+				}}
+			/>
+			<input
+				class="pop-num"
+				type="number"
+				step="0.05"
+				min="0"
+				max="5"
+				value={editorStore.lightIntensity}
+				oninput={(e) => num(e, 0, (v) => engine.setLightIntensity(v))}
+			/>
+		</div>
+		<div class="pop-row">
+			<span class="pop-label">Ambient</span>
+			<input
+				class="pop-num"
+				type="number"
+				step="0.05"
+				min="0"
+				max="5"
+				value={editorStore.ambientIntensity}
+				oninput={(e) => num(e, 0, (v) => engine.setAmbientIntensity(v))}
+			/>
+		</div>
+		<div class="pop-row">
+			<span class="pop-label">Azimuth</span>
+			<input
+				class="pop-num"
+				type="number"
+				step="1"
+				value={editorStore.lightAzimuth}
+				oninput={(e) => num(e, -Infinity, (v) => engine.setLightAngle(v, editorStore.lightElevation))}
+			/>
+			<span class="pop-unit">°</span>
+		</div>
+		<div class="pop-row">
+			<span class="pop-label">Elevation</span>
+			<input
+				class="pop-num"
+				type="number"
+				step="1"
+				min="1"
+				max="89"
+				value={editorStore.lightElevation}
+				oninput={(e) => num(e, 1, (v) => engine.setLightAngle(editorStore.lightAzimuth, Math.min(89, v)))}
+			/>
+			<span class="pop-unit">°</span>
+		</div>
+		<div class="pop-note">Key light direction and brightness, plus the ambient fill that keeps shadows from going pure black.</div>
+	</div>
+
+	<div class="pop-sec">
+		<div class="pop-head"><span>Navigation</span></div>
+		<FieldToggle
+			label="Orbit around selection"
+			value={editorStore.orbitAroundSelection}
+			onchange={(v) => set('orbitAroundSelection', v)}
+		/>
+		<div class="pop-note">
+			Selecting something re-centres orbit/pan on it, like Blender's setting of the same name. Off, the pivot
+			stays put until you pan or hit <b>F</b> to focus.
+		</div>
+	</div>
+
+	<div class="pop-sec">
 		<div class="pop-head"><span>Snapping</span></div>
 		<div class="pop-note">
 			Amounts used when snapping is on. Toggle it from the topbar or with <b>X</b>.

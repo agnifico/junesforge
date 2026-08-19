@@ -14,6 +14,7 @@
 	import HelpOverlay from '$lib/propsize/ui/HelpOverlay.svelte';
 	import ExportModal from '$lib/propsize/ui/ExportModal.svelte';
 	import Toast from '$lib/propsize/ui/Toast.svelte';
+	import PromptModal from '$lib/propsize/ui/PromptModal.svelte';
 
 	const engine = new SceneEngine();
 
@@ -55,6 +56,10 @@
 		// background colour doesn't flash the default first.
 		editorStore.loadSettings();
 		engine.setBgColor(editorStore.bgColor);
+		engine.setLightIntensity(editorStore.lightIntensity);
+		engine.setLightColor(editorStore.lightColor);
+		engine.setAmbientIntensity(editorStore.ambientIntensity);
+		engine.setLightAngle(editorStore.lightAzimuth, editorStore.lightElevation);
 		(async () => {
 			const loadedSample = await loadSampleFromUrl();
 			if (!loadedSample) seedStarterScene();
@@ -112,6 +117,7 @@
 	<HelpOverlay />
 	<ExportModal />
 	<Toast />
+	<PromptModal />
 </div>
 
 <style>

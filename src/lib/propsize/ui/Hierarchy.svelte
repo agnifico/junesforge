@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { docStore } from '$lib/propsize/core/document.svelte';
 	import { editorStore } from '$lib/propsize/core/editor.svelte';
 	import { ICONS, TOOLBAR_ICONS } from '$lib/propsize/core/icons';
@@ -8,6 +9,17 @@
 	import type { SceneEngine } from '$lib/propsize/core/scene-engine.svelte';
 
 	let { engine }: { engine: SceneEngine } = $props();
+
+	// Indent stops growing past this depth — a row nested 20+ groups deep
+	// would otherwise push its own icon and name past the panel's right edge
+	// (indentation eating the exact space the label needs to be readable in).
+	// Beyond it every row lines up at the same indent; the ancestor-pins
+	// stack above is what actually communicates "how deep are we" past this
+	// point, not the staircase of padding.
+	const MAX_INDENT_DEPTH = 12;
+	function indentPx(depth: number) {
+		return 6 + Math.min(depth, MAX_INDENT_DEPTH) * 14;
+	}
 
 	type Row = { node: SceneNode; depth: number; hasChildren: boolean };
 
@@ -44,6 +56,118 @@
 	/** Anchor for shift-click ranges, as in any file explorer. */
 	let anchorId = $state<string | null>(null);
 
+	// ---- scroll-to-selection & ancestor breadcrumb ---------------------------
+	// A click in the viewport (or anywhere else that changes the selection)
+	// should bring the corresponding row into view here too, and — since a
+	// group deep enough to fill the panel can put a selected child's parent
+	// entirely out of frame — keep its containing groups legible by pinning
+	// them to the top of the panel until scrolling reaches them for real.
+	let treeEl = $state<HTMLDivElement | null>(null);
+	let scrollTop = $state(0);
+	/** Measured off the first rendered row rather than hard-coded, so a CSS
+	 *  tweak to row padding/line-height can't quietly desync the scroll math. */
+	let rowHeight = $state(27);
+
+	function onTreeScroll() {
+		scrollTop = treeEl?.scrollTop ?? 0;
+	}
+
+	function measureRowHeight(el: HTMLElement, isFirst: boolean) {
+		if (isFirst) rowHeight = el.getBoundingClientRect().height || rowHeight;
+		return {
+			update(v: boolean) {
+				if (v) rowHeight = el.getBoundingClientRect().height || rowHeight;
+			}
+		};
+	}
+
+	/** Root-first chain of ancestor nodes above `id` — empty for a top-level
+	 *  node or when nothing's selected. */
+	function ancestorChainOf(id: string | null): SceneNode[] {
+		const chain: SceneNode[] = [];
+		let cur = id ? (docStore.node(id)?.parentId ?? null) : null;
+		while (cur) {
+			const n = docStore.node(cur);
+			if (!n) break;
+			chain.unshift(n);
+			cur = n.parentId;
+		}
+		return chain;
+	}
+
+	// The last row explicitly clicked (or, failing that, the first of whatever
+	// selectedIds holds) stands in for "the" selection when there are several —
+	// good enough for a breadcrumb, which can only ever point at one lineage.
+	let primaryId = $derived(
+		anchorId && docStore.selectedIds.includes(anchorId)
+			? anchorId
+			: (docStore.selectedIds[0] ?? null)
+	);
+	let ancestorChain = $derived(ancestorChainOf(primaryId));
+	let ancestorIds = $derived(new Set(ancestorChain.map((n) => n.id)));
+	let rowIndexOf = $derived.by(() => {
+		const m = new Map<string, number>();
+		rows.forEach((r, i) => m.set(r.node.id, i));
+		return m;
+	});
+	// An ancestor only needs pinning once its own row has scrolled above the
+	// visible area — and pre-order guarantees that's a prefix of the chain
+	// starting at the root, so a plain filter is already in the right order.
+	let pinnedAncestors = $derived(
+		ancestorChain.filter((n) => (rowIndexOf.get(n.id) ?? -1) * rowHeight < scrollTop)
+	);
+	// Steel (--steel in theme.css) and the panel's own background, as plain
+	// RGB triples so a pinned row's backdrop can be blended to a solid color
+	// in JS — CSS alone can't do that without color-mix(), which is one more
+	// browser-support question than this needs.
+	const STEEL: [number, number, number] = [111, 147, 179];
+	const PANEL_BG: [number, number, number] = [28, 30, 32]; // --bg-1
+
+	/** Deeper ancestors (closer to the actual selection) read stronger than
+	 *  the root — the immediate parent is the one you're most likely orienting
+	 *  against, so it's the one that should stand out most. */
+	function ancestorAlpha(node: SceneNode): number {
+		const i = ancestorChain.findIndex((n) => n.id === node.id);
+		return ancestorChain.length ? 0.08 + ((i + 1) / ancestorChain.length) * 0.14 : 0;
+	}
+	/** Translucent tint for an ancestor row still in its natural place in the
+	 *  list — it sits over the panel's own background like any other row. */
+	function ancestorTint(node: SceneNode): string {
+		return `rgba(${STEEL[0]}, ${STEEL[1]}, ${STEEL[2]}, ${ancestorAlpha(node).toFixed(3)})`;
+	}
+	/** Same tint, pre-blended to an opaque color — a pinned duplicate has to
+	 *  fully occlude the real row scrolling past underneath it, so it can't
+	 *  use a translucent background the way the in-place version does. */
+	function ancestorPinBg(node: SceneNode): string {
+		const a = ancestorAlpha(node);
+		const mix = (base: number, tint: number) => Math.round(base * (1 - a) + tint * a);
+		return `rgb(${mix(PANEL_BG[0], STEEL[0])}, ${mix(PANEL_BG[1], STEEL[1])}, ${mix(PANEL_BG[2], STEEL[2])})`;
+	}
+
+	function scrollRowIntoView(id: string) {
+		if (!treeEl) return;
+		const idx = rowIndexOf.get(id);
+		if (idx === undefined) return;
+		// Worst case every ancestor ends up pinned once we've scrolled — reserve
+		// that much headroom so the row we're revealing doesn't land right
+		// underneath the pin stack it's about to grow.
+		const topMargin = ancestorChainOf(id).length * rowHeight;
+		const rowTop = idx * rowHeight;
+		const rowBottom = rowTop + rowHeight;
+		const viewTop = treeEl.scrollTop + topMargin;
+		const viewBottom = treeEl.scrollTop + treeEl.clientHeight;
+		if (rowTop < viewTop) treeEl.scrollTop = Math.max(0, rowTop - topMargin);
+		else if (rowBottom > viewBottom) treeEl.scrollTop = rowBottom - treeEl.clientHeight;
+	}
+
+	// Runs after expandAncestors (above) has had a chance to open whatever was
+	// collapsed, so `rows` already includes the row we're about to scroll to.
+	$effect(() => {
+		const id = primaryId;
+		if (!id) return;
+		tick().then(() => scrollRowIntoView(id));
+	});
+
 	function iconFor(node: SceneNode): string {
 		if (isGroup(node)) return ICONS.group;
 		if (isPrimitive(node)) return GEO_DEFS[node.type].icon;
@@ -76,6 +200,22 @@
 		engine.requestSync();
 	}
 
+	/** Collapsing a group that contains part of the selection would otherwise
+	 *  leave those rows hidden with nothing to show for it — they'd stay
+	 *  selected, but no longer reachable in the tree. Fold just the hidden
+	 *  members up to the group being collapsed, leaving any other selected
+	 *  object (one that isn't inside this group) untouched — collapsing
+	 *  shouldn't be able to silently drop part of an unrelated selection. */
+	function onToggleCollapse(node: SceneNode) {
+		const collapsing = !editorStore.collapsed.has(node.id);
+		const hidden = (id: string) => id === node.id || engine.isAncestorOf(node.id, id);
+		if (collapsing && docStore.selectedIds.some(hidden)) {
+			const kept = docStore.selectedIds.filter((id) => !hidden(id));
+			engine.setSelection([...kept, node.id]);
+		}
+		editorStore.toggleCollapsed(node.id);
+	}
+
 	function onRowClick(e: MouseEvent, node: SceneNode) {
 		const visible = rows.map((r) => r.node.id);
 
@@ -104,9 +244,9 @@
 	let unshareTitle = $derived(
 		sharedMats > 0
 			? `Give every object its own material.\n\n${sharedMats} object${sharedMats === 1 ? '' : 's'} currently ` +
-				`share a material with another object, so recolouring one repaints them all — common in models ` +
-				`imported from a single file. This hands each part its own copy, making it paintable on its own.\n\n` +
-				`Objects that already had a material to themselves are left alone. Undoable with Ctrl/Cmd+Z.`
+					`share a material with another object, so recolouring one repaints them all — common in models ` +
+					`imported from a single file. This hands each part its own copy, making it paintable on its own.\n\n` +
+					`Objects that already had a material to themselves are left alone. Undoable with Ctrl/Cmd+Z.`
 			: 'Every object already has its own material — nothing to unshare.'
 	);
 
@@ -181,7 +321,8 @@
 		const mode = modeFor(e, node);
 		// 'into' targets the row itself; 'before'/'after' target its parent, so
 		// a row inside the dragged subtree can still be a valid sibling anchor.
-		if (mode === 'into' ? insideDrag(node.id) : node.parentId !== null && insideDrag(node.parentId)) return;
+		if (mode === 'into' ? insideDrag(node.id) : node.parentId !== null && insideDrag(node.parentId))
+			return;
 		e.preventDefault();
 		e.stopPropagation();
 		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
@@ -218,7 +359,14 @@
 		if (dragIds.length) e.preventDefault();
 	}
 	function onTreeDrop(e: DragEvent) {
-		if (!dragIds.length || (e.target as HTMLElement).id !== 'tree') return;
+		// Dropping on the empty gutter below the last row (rather than on a
+		// row itself) un-parents to root. That gutter belongs to #tree or its
+		// direct .tree-rows wrapper — never a .node-row — so checking for
+		// either id/class is more robust than assuming which one the browser
+		// reports as e.target.
+		const target = e.target as HTMLElement;
+		const onEmptyGutter = target.id === 'tree' || target.classList.contains('tree-rows');
+		if (!dragIds.length || !onEmptyGutter) return;
 		e.preventDefault();
 		const ids = dragIds;
 		onDragEnd();
@@ -231,71 +379,116 @@
 </div>
 
 <div class="act-bar">
-		<button class="btn icon-only" title="Group selected (G)" onclick={() => engine.groupSelection()}
-			>{@html TOOLBAR_ICONS.groupBtn}</button
+	<button class="btn icon-only" title="Group selected (G)" onclick={() => engine.groupSelection()}
+		>{@html TOOLBAR_ICONS.groupBtn}</button
+	>
+	<button class="btn icon-only" title="Ungroup" onclick={() => engine.ungroupSelection()}
+		>{@html TOOLBAR_ICONS.ungroupBtn}</button
+	>
+	<button
+		class="btn icon-only"
+		title="Duplicate (Ctrl/Cmd+D)"
+		onclick={() => engine.duplicateSelection()}>{@html TOOLBAR_ICONS.dupBtn}</button
+	>
+	<button class="btn icon-only danger" title="Delete (Del)" onclick={() => engine.deleteSelection()}
+		>{@html TOOLBAR_ICONS.delBtn}</button
+	>
+</div>
+<div class="act-bar">
+	<button
+		class="btn sm"
+		title="Sit the selection on the grid"
+		onclick={() => engine.dropToGround()}
+	>
+		Drop to ground
+	</button>
+</div>
+<div class="act-bar">
+	<div class="act-group">
+		<span class="act-group-label">Material</span>
+		<button
+			class="btn sm"
+			disabled={!copySource}
+			title={copySource
+				? `Copy the material off ${copySource.name}`
+				: 'Select a single shape to copy its material'}
+			onclick={copyMat}
 		>
-		<button class="btn icon-only" title="Ungroup" onclick={() => engine.ungroupSelection()}
-			>{@html TOOLBAR_ICONS.ungroupBtn}</button
+			Copy
+		</button>
+		<button
+			class="btn sm"
+			disabled={pasteTargets === 0}
+			title={!editorStore.materialClipboard
+				? 'Copy a material first'
+				: pasteTargets === 0
+					? 'Select the shapes to paste onto'
+					: `Paste onto ${pasteTargets} shape${pasteTargets === 1 ? '' : 's'}`}
+			onclick={() => engine.pasteMaterialToSelection()}
 		>
-		<button class="btn icon-only" title="Duplicate (Ctrl/Cmd+D)" onclick={() => engine.duplicateSelection()}
-			>{@html TOOLBAR_ICONS.dupBtn}</button
-		>
-		<button class="btn icon-only danger" title="Delete (Del)" onclick={() => engine.deleteSelection()}
-			>{@html TOOLBAR_ICONS.delBtn}</button
-		>
-	</div>
-	<div class="act-bar">
-		<button class="btn sm" title="Sit the selection on the grid" onclick={() => engine.dropToGround()}>
-			Drop to ground
+			Paste
 		</button>
 	</div>
-	<div class="act-bar">
-		<div class="act-group">
-			<span class="act-group-label">Material</span>
-			<button
-				class="btn sm"
-				disabled={!copySource}
-				title={copySource
-					? `Copy the material off ${copySource.name}`
-					: 'Select a single shape to copy its material'}
-				onclick={copyMat}
-			>
-				Copy
-			</button>
-			<button
-				class="btn sm"
-				disabled={pasteTargets === 0}
-				title={!editorStore.materialClipboard
-					? 'Copy a material first'
-					: pasteTargets === 0
-						? 'Select the shapes to paste onto'
-						: `Paste onto ${pasteTargets} shape${pasteTargets === 1 ? '' : 's'}`}
-				onclick={() => engine.pasteMaterialToSelection()}
-			>
-				Paste
-			</button>
-		</div>
-	</div>
-	<div class="act-bar">
-		<button class="btn sm" title={unshareTitle} disabled={sharedMats === 0} onclick={unshareMats}>
-			Unshare materials{sharedMats > 0 ? ` (${sharedMats})` : ''}
-		</button>
-	</div>
+</div>
+<div class="act-bar">
+	<button class="btn sm" title={unshareTitle} disabled={sharedMats === 0} onclick={unshareMats}>
+		Unshare materials{sharedMats > 0 ? ` (${sharedMats})` : ''}
+	</button>
+</div>
 
-	<div id="tree" ondragover={onTreeDragOver} ondrop={onTreeDrop}>
-		{#if !rows.length}
-			<div class="tree-empty">No objects yet.<br />Use the shape tray above to add your first primitive.</div>
-		{:else}
-			{#each rows as row (row.node.id)}
+<div
+	id="tree"
+	bind:this={treeEl}
+	onscroll={onTreeScroll}
+	ondragover={onTreeDragOver}
+	ondrop={onTreeDrop}
+>
+	{#if !rows.length}
+		<div class="tree-empty">
+			No objects yet.<br />Use the shape tray above to add your first primitive.
+		</div>
+	{:else}
+		<div class="tree-rows">
+			{#if pinnedAncestors.length}
+				<!-- Duplicates of whichever containing groups have scrolled out of
+				     frame, pinned above the live rows so the selection never loses
+				     its context — see the "scroll-to-selection & ancestor breadcrumb"
+				     block in the script. Each disappears the moment its real row
+				     scrolls into view, since it then drops out of pinnedAncestors. -->
+				<div class="ancestor-pins" style="--pins-h:{pinnedAncestors.length * rowHeight}px">
+					{#each pinnedAncestors as anc (anc.id)}
+						<div
+							class="node-row pinned"
+							style="padding-left:{indentPx(
+								rows.find((r) => r.node.id === anc.id)?.depth ?? 0
+							)}px; --anc-pin-bg:{ancestorPinBg(anc)}"
+							onclick={() => {
+								engine.setSelection([anc.id]);
+								anchorId = anc.id;
+							}}
+						>
+							<span class="chev leaf">{@html TOOLBAR_ICONS.chev}</span>
+							<span class="gicon">{@html iconFor(anc)}</span>
+							<span class="nlabel">{anc.name}</span>
+						</div>
+					{/each}
+				</div>
+			{/if}
+			{#each rows as row, i (row.node.id)}
 				<div
 					class="node-row"
 					class:selected={docStore.selectedIds.includes(row.node.id)}
+					class:ancestor={ancestorIds.has(row.node.id) &&
+						!docStore.selectedIds.includes(row.node.id)}
 					class:hidden={!row.node.visible}
 					class:drop-into={dropTargetId === row.node.id && dropMode === 'into'}
 					class:drop-before={dropTargetId === row.node.id && dropMode === 'before'}
 					class:drop-after={dropTargetId === row.node.id && dropMode === 'after'}
 					class:dragging={dragIds.includes(row.node.id)}
-					style="padding-left:{6 + row.depth * 14}px"
+					style="padding-left:{indentPx(row.depth)}px; --anc-tint:{ancestorIds.has(row.node.id)
+						? ancestorTint(row.node)
+						: 'transparent'}"
+					use:measureRowHeight={i === 0}
 					draggable="true"
 					onclick={(e) => onRowClick(e, row.node)}
 					ondragstart={(e) => onDragStart(e, row.node)}
@@ -310,7 +503,7 @@
 						style="transform:rotate({editorStore.collapsed.has(row.node.id) ? 0 : 90}deg)"
 						onclick={(e) => {
 							e.stopPropagation();
-							editorStore.toggleCollapsed(row.node.id);
+							onToggleCollapse(row.node);
 						}}
 					>
 						{@html TOOLBAR_ICONS.chev}
@@ -350,5 +543,6 @@
 					</span>
 				</div>
 			{/each}
-		{/if}
-	</div>
+		</div>
+	{/if}
+</div>

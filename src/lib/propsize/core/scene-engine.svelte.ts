@@ -20,7 +20,7 @@ import { defaultTransform, round3, D2R, R2D } from './utils';
 import { SimpleOrbitControls } from './orbit-controls';
 import { isGroup, isPrimitive, isImported } from './types';
 import type { SceneNode, PrimitiveNode, GroupNode, ImportedNode, PrimitiveType, Asset, AssetSource, Vec3 } from './types';
-import { importModel, normalizeImport } from '../import/loaders';
+import { importModel, normalizeImport, type ImportPart } from '../import/loaders';
 import { dataUrlToFile } from '../import/local-import';
 
 type Axis = 'x' | 'y' | 'z';
@@ -80,6 +80,32 @@ function countTris(obj: THREE.Object3D) {
 		}
 	});
 	return Math.round(tris);
+}
+/** `obj`'s own bounding box, expressed in its own local frame (i.e. as if its
+ *  position/rotation/scale were identity right now) — every descendant mesh's
+ *  geometry bounds, mapped through its world matrix and back through the
+ *  inverse of `obj`'s. Used to anchor one edge in place during a one-sided
+ *  scale; for a single mesh this is just its geometry's own bounding box. */
+function localBounds(obj: THREE.Object3D): THREE.Box3 {
+	obj.updateWorldMatrix(true, true);
+	const invRoot = obj.matrixWorld.clone().invert();
+	const box = new THREE.Box3();
+	const corner = new THREE.Vector3();
+	obj.traverse((o) => {
+		const mesh = o as THREE.Mesh;
+		if (!mesh.isMesh || !mesh.geometry) return;
+		if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+		const gb = mesh.geometry.boundingBox!;
+		if (!isFinite(gb.min.x)) return;
+		for (let i = 0; i < 8; i++) {
+			corner
+				.set(i & 1 ? gb.max.x : gb.min.x, i & 2 ? gb.max.y : gb.min.y, i & 4 ? gb.max.z : gb.min.z)
+				.applyMatrix4(mesh.matrixWorld)
+				.applyMatrix4(invRoot);
+			box.expandByPoint(corner);
+		}
+	});
+	return box;
 }
 
 // ---- gizmo geometry (module-level, shared across instances) ---------------
@@ -145,6 +171,10 @@ type GizmoTarget = {
 	startWorldPos?: THREE.Vector3;
 	startWorldQ?: THREE.Quaternion;
 	parentWorldQInv?: THREE.Quaternion;
+	/** Object-local bounding box (already includes startScale) and local
+	 *  rotation, captured for one-sided (anchor-the-far-edge) scaling. */
+	localBox?: THREE.Box3;
+	startLocalQ?: THREE.Quaternion;
 };
 type GizmoDrag = {
 	mode: GizmoMode;
@@ -170,6 +200,8 @@ export class SceneEngine {
 	helpersGroup!: THREE.Group;
 	gridHelper!: THREE.GridHelper;
 	shadowPlane!: THREE.Mesh;
+	hemiLight!: THREE.HemisphereLight;
+	dirLight!: THREE.DirectionalLight;
 
 	threeObjects = new Map<string, THREE.Object3D>();
 	selectionHelpers = new Map<string, THREE.BoxHelper>();
@@ -214,20 +246,20 @@ export class SceneEngine {
 		this.helpersGroup = new THREE.Group();
 		this.scene.add(this.helpersGroup);
 
-		const hemiLight = new THREE.HemisphereLight(0xdfe6ea, 0x2a2620, 0.85);
-		this.scene.add(hemiLight);
-		const dirLight = new THREE.DirectionalLight(0xfff2df, 1.15);
-		dirLight.position.set(6, 9, 4);
-		dirLight.castShadow = true;
-		dirLight.shadow.mapSize.set(2048, 2048);
-		dirLight.shadow.camera.left = -12;
-		dirLight.shadow.camera.right = 12;
-		dirLight.shadow.camera.top = 12;
-		dirLight.shadow.camera.bottom = -12;
-		dirLight.shadow.camera.far = 40;
-		dirLight.shadow.bias = -0.0025;
-		this.scene.add(dirLight);
-		this.scene.add(dirLight.target);
+		this.hemiLight = new THREE.HemisphereLight(0xdfe6ea, 0x2a2620, editorStore.ambientIntensity);
+		this.scene.add(this.hemiLight);
+		this.dirLight = new THREE.DirectionalLight(editorStore.lightColor, editorStore.lightIntensity);
+		this.dirLight.castShadow = true;
+		this.dirLight.shadow.mapSize.set(2048, 2048);
+		this.dirLight.shadow.camera.left = -12;
+		this.dirLight.shadow.camera.right = 12;
+		this.dirLight.shadow.camera.top = 12;
+		this.dirLight.shadow.camera.bottom = -12;
+		this.dirLight.shadow.camera.far = 40;
+		this.dirLight.shadow.bias = -0.0025;
+		this.scene.add(this.dirLight);
+		this.scene.add(this.dirLight.target);
+		this.setLightAngle(editorStore.lightAzimuth, editorStore.lightElevation);
 
 		this.gridHelper = new THREE.GridHelper(40, 40, 0x4a4d4f, 0x2a2d2f);
 		this.gridHelper.visible = editorStore.showGrid;
@@ -316,6 +348,34 @@ export class SceneEngine {
 		editorStore.gizmoMode = mode;
 	}
 
+	// ---- lighting -------------------------------------------------------------
+	setLightIntensity(v: number) {
+		editorStore.lightIntensity = v;
+		this.dirLight.intensity = v;
+	}
+	setLightColor(hex: string) {
+		editorStore.lightColor = hex;
+		this.dirLight.color.set(hex);
+	}
+	setAmbientIntensity(v: number) {
+		editorStore.ambientIntensity = v;
+		this.hemiLight.intensity = v;
+	}
+	/** Repositions the key light on a sphere around the origin — azimuth swings
+	 *  it around Y (0° = +X), elevation lifts it off the horizon. Distance is
+	 *  fixed; it only ever existed to give the light somewhere to be, and the
+	 *  shadow camera's frustum doesn't depend on it. */
+	setLightAngle(azimuthDeg: number, elevationDeg: number) {
+		editorStore.lightAzimuth = azimuthDeg;
+		editorStore.lightElevation = elevationDeg;
+		const az = D2R(azimuthDeg);
+		const el = D2R(elevationDeg);
+		const radius = 11.5;
+		const horiz = Math.cos(el) * radius;
+		this.dirLight.position.set(Math.cos(az) * horiz, Math.sin(el) * radius, Math.sin(az) * horiz);
+		this.dirLight.target.position.set(0, 0, 0);
+	}
+
 	// ---- sync engine ----------------------------------------------------------
 	requestSync() {
 		if (this.#syncScheduled) return;
@@ -400,13 +460,44 @@ export class SceneEngine {
 		// reopens the Model library panel.
 		const template = this.#assetCache.get(node.assetId);
 		if (!template) this.#tryAutoResolveEmbeddedAsset(node.assetId);
-		const obj = template ? template.clone(true) : this.#placeholderObject();
+		const obj = template ? this.#buildImportedObject(template, node.part) : this.#placeholderObject();
 		obj.userData.nodeId = node.id;
 		obj.userData.isPlaceholder = !template;
 		obj.userData.isAssetClone = !!template;
 		this.#applyMaterialOverride(obj, node);
 		this.#applyShadowFlags(obj, node.castShadow, node.receiveShadow);
 		return obj;
+	}
+
+	/**
+	 * Clones the right content out of an imported template. A whole-model
+	 * node clones the template directly, unchanged. A split-out part clones
+	 * just its own child — matched by name first (stable across a re-import
+	 * that reorders children), falling back to the index recorded at split
+	 * time — and wraps it in an empty Group offset by `-part.center`.
+	 *
+	 * That wrapper matters because the sync loop only ever sets the *node's
+	 * own* top-level object transform (from node.transform); it never touches
+	 * anything nested inside. If the part's clone were used directly as the
+	 * node's object, whatever position it originally had within the file
+	 * would simply be overwritten by node.transform, discarding it — visibly
+	 * fine for a part like an OBJ's, which starts at identity anyway, but
+	 * it also means node.transform.position (== part.center, see
+	 * addImportedObjectSplit) would BE the part's only position, with no
+	 * memory of where it actually sat in the file. Wrapping means the child's
+	 * original placement survives one level down, undisturbed by sync, while
+	 * the wrapper's own origin — which node.transform drives, and which the
+	 * gizmo pivots on — sits exactly at the part's own geometry centre.
+	 */
+	#buildImportedObject(template: THREE.Object3D, part: ImportedNode['part']): THREE.Object3D {
+		if (!part) return template.clone(true);
+		const source = template.children.find((c) => c.name === part.name) ?? template.children[part.index] ?? null;
+		if (!source) return this.#placeholderObject();
+		const inner = source.clone(true);
+		inner.position.sub(new THREE.Vector3(part.center.x, part.center.y, part.center.z));
+		const wrapper = new THREE.Group();
+		wrapper.add(inner);
+		return wrapper;
 	}
 
 	/**
@@ -523,6 +614,44 @@ export class SceneEngine {
 	// ---- selection --------------------------------------------------------
 	setSelection(ids: string[]) {
 		docStore.selectedIds = ids.filter((id) => docStore.node(id));
+		// The selection outline and spec plate only repaint inside syncScene(),
+		// which is otherwise only scheduled by document edits — without this a
+		// selection made from the Hierarchy panel (or a plain click with no
+		// drag) leaves both stuck on whatever was selected last until some
+		// unrelated edit happens to trigger a sync.
+		this.requestSync();
+		this.#recenterOrbitOnSelection();
+	}
+
+	/** Re-anchors the orbit pivot to the new selection *without* moving the
+	 *  camera itself — only orbiting or panning from here on revolves around
+	 *  it. Matches Blender's "Orbit Around Selection", which is what the
+	 *  Preferences → Navigation toggle of the same name switches on; off (the
+	 *  default) leaves the pivot exactly where it was, as most 3D tools do
+	 *  out of the box. (See `focusOnSelection`, bound to F/double-click, for
+	 *  the version that actually reframes the camera onto the selection —
+	 *  that one always runs, regardless of this setting.)
+	 *  Selecting nothing leaves the pivot where it was. */
+	#recenterOrbitOnSelection() {
+		if (!editorStore.orbitAroundSelection || !docStore.selectedIds.length) return;
+		const box = new THREE.Box3();
+		let any = false;
+		for (const id of docStore.selectedIds) {
+			const obj = this.threeObjects.get(id);
+			if (obj) {
+				box.expandByObject(obj);
+				any = true;
+			}
+		}
+		if (!any) return;
+		const center = box.getCenter(new THREE.Vector3());
+		const offset = this.camera.position.clone().sub(center);
+		this.controls.target.copy(center);
+		this.controls.spherical.setFromVector3(offset);
+		this.controls.spherical.radius = Math.max(
+			this.controls.minDistance,
+			Math.min(this.controls.maxDistance, this.controls.spherical.radius)
+		);
 	}
 	toggleSelection(id: string) {
 		if (docStore.selectedIds.includes(id)) this.setSelection(docStore.selectedIds.filter((x) => x !== id));
@@ -741,7 +870,10 @@ export class SceneEngine {
 			receiveShadow: true
 		};
 		docStore.doc.nodes.push(node);
-		this.requestSync();
+		// Synchronous, not requestSync() — setSelection() below needs node.id
+		// to already resolve in threeObjects if "Orbit around selection" is on,
+		// not next-frame (see the same note on duplicateSelection()).
+		this.syncScene();
 		this.setSelection([node.id]);
 		editorStore.toast('Added ' + node.name);
 	}
@@ -758,7 +890,7 @@ export class SceneEngine {
 			transform: defaultTransform()
 		};
 		docStore.doc.nodes.push(node);
-		this.requestSync();
+		this.syncScene();
 		this.setSelection([node.id]);
 	}
 
@@ -811,12 +943,91 @@ export class SceneEngine {
 			},
 			castShadow: true,
 			receiveShadow: true,
-			stats: meta.stats
+			stats: meta.stats,
+			part: null
 		};
 		docStore.doc.nodes.push(node);
-		this.requestSync();
+		this.syncScene();
 		this.setSelection([node.id]);
 		editorStore.toast('Added ' + meta.name);
+	}
+
+	/**
+	 * Same asset-registration as addImportedObject(), but for a model the user
+	 * chose to bring in as separate objects: one Asset + cached template as
+	 * before, but a GroupNode carrying the normalize/ground transform, with
+	 * one ImportedNode per part underneath it at identity local transform.
+	 * Because three.js composes parent*child transforms, the group renders
+	 * identically to a merged import — the parts are just independently
+	 * selectable, movable and recolourable now.
+	 */
+	addImportedObjectSplit(
+		object: THREE.Object3D,
+		parts: ImportPart[],
+		meta: { name: string; format: Asset['format']; source: AssetSource; stats: { meshes: number; triangles: number } }
+	) {
+		docStore.mark(null);
+
+		const groundedY = object.position.y;
+		const scale = { x: object.scale.x, y: object.scale.y, z: object.scale.z };
+		object.position.set(0, 0, 0);
+		object.scale.set(1, 1, 1);
+
+		const assetId = docStore.newId('a');
+		const asset: Asset = { id: assetId, name: meta.name, kind: 'model', format: meta.format, source: meta.source };
+		docStore.doc.assets[assetId] = asset;
+		this.#assetCache.set(assetId, object);
+
+		const sel = docStore.selectedIds;
+		const soleSelected = sel.length === 1 ? docStore.node(sel[0]) : undefined;
+		const parentId = soleSelected && isGroup(soleSelected) ? soleSelected.id : null;
+		const siblingCount = docStore.children(parentId).length;
+
+		const groupNode: GroupNode = {
+			id: docStore.newId(),
+			parentId,
+			name: meta.name,
+			kind: 'group',
+			visible: true,
+			locked: false,
+			transform: {
+				position: {
+					x: round3((siblingCount % 4) * 1.4 - 2),
+					y: round3(groundedY),
+					z: round3(Math.floor(siblingCount / 4) * 1.4)
+				},
+				rotation: { x: 0, y: 0, z: 0 },
+				scale
+			}
+		};
+		docStore.doc.nodes.push(groupNode);
+
+		for (const part of parts) {
+			const node: ImportedNode = {
+				id: docStore.newId(),
+				parentId: groupNode.id,
+				name: part.name,
+				kind: 'imported',
+				assetId,
+				materialOverride: null,
+				visible: true,
+				locked: false,
+				// Pivoting the node at the part's own geometry centre (rather than
+				// identity, i.e. the whole file's shared origin) is what gives it a
+				// sane rotate/scale gizmo — see #buildImportedObject() for the other
+				// half of this: the wrapper that keeps the part rendering exactly
+				// where it originally sat once its own origin has moved like this.
+				transform: { ...defaultTransform(), position: { ...part.center } },
+				castShadow: true,
+				receiveShadow: true,
+				stats: part.stats,
+				part: { index: part.index, name: part.name, center: part.center }
+			};
+			docStore.doc.nodes.push(node);
+		}
+		this.syncScene();
+		this.setSelection([groupNode.id]);
+		editorStore.toast(`Added ${meta.name} as ${parts.length} objects`);
 	}
 
 	// ---- asset registry (used by the model library to restore models) -------
@@ -892,7 +1103,11 @@ export class SceneEngine {
 		const newIds = docStore.selectedIds
 			.map((id) => docStore.duplicate(id, (nid) => this.widthOf(nid), snap))
 			.filter((id): id is string => !!id);
-		this.requestSync();
+		// Synchronous, not requestSync() — setSelection() below (with "Orbit
+		// around selection" on) reads threeObjects.get() for each new id to
+		// recentre the pivot, and requestSync() only runs on the next animation
+		// frame, so the lookup would still be finding nothing.
+		this.syncScene();
 		this.setSelection(newIds);
 		editorStore.toast('Duplicated');
 	}
@@ -954,7 +1169,10 @@ export class SceneEngine {
 			node.transform.scale = { x: scl.x, y: scl.y, z: scl.z };
 			node.parentId = groupNode.id;
 		}
-		this.requestSync();
+		// Synchronous, not requestSync() — see the same note in
+		// duplicateSelection(): setSelection() below needs groupNode.id to
+		// already resolve in threeObjects, not next-frame.
+		this.syncScene();
 		this.setSelection([groupNode.id]);
 		editorStore.toast(`Grouped ${sel.length} object(s)`);
 	}
@@ -992,7 +1210,10 @@ export class SceneEngine {
 			node.parentId = newParentId;
 		}
 		docStore.doc.nodes = docStore.doc.nodes.filter((n) => n.id !== groupNode.id);
-		this.requestSync();
+		// Synchronous — the children just got new world transforms above, and
+		// setSelection() below reads current object positions to recentre the
+		// orbit pivot; requestSync() wouldn't apply those until next frame.
+		this.syncScene();
 		this.setSelection(childIds);
 		editorStore.toast('Ungrouped');
 	}
@@ -1516,6 +1737,19 @@ export class SceneEngine {
 		this.#gizmoParts.translate.visible = mode === 'translate';
 		this.#gizmoParts.rotate.visible = mode === 'rotate';
 		this.#gizmoParts.scale.visible = mode === 'scale';
+		// Scale always resizes an object along its own local axes, so once an
+		// object is rotated a world-aligned scale gizmo points a different way
+		// than what dragging it actually does. For a single selection, orient
+		// the scale handles to match the object's rotation so the handle you
+		// drag is the axis it scales. (Left world-aligned for multi-select,
+		// where there's no one rotation to match.)
+		const singleObj = roots.length === 1 ? this.threeObjects.get(roots[0].id) : null;
+		if (singleObj) {
+			singleObj.updateWorldMatrix(true, false);
+			this.#gizmoParts.scale.quaternion.copy(singleObj.getWorldQuaternion(new THREE.Quaternion()));
+		} else {
+			this.#gizmoParts.scale.quaternion.identity();
+		}
 		gizmoGroup.scale.setScalar(Math.max(0.35, this.camera.position.distanceTo(c) * 0.15));
 	}
 
@@ -1559,6 +1793,10 @@ export class SceneEngine {
 				t.startWorldPos = obj.getWorldPosition(new THREE.Vector3());
 				t.startWorldQ = obj.getWorldQuaternion(new THREE.Quaternion());
 				t.parentWorldQInv = parent.getWorldQuaternion(new THREE.Quaternion()).invert();
+				if (editorStore.gizmoMode === 'scale') {
+					t.localBox = localBounds(obj);
+					t.startLocalQ = obj.quaternion.clone();
+				}
 			}
 			return t;
 		});
@@ -1589,7 +1827,11 @@ export class SceneEngine {
 				axisDir.normalize();
 			} else {
 				const info = AXIS_INFO.find((a) => a.axis === scaleAxis)!;
-				axisDir = info.dir.clone();
+				// Read the axis off the handle's actual current orientation (which
+				// tracks the object's rotation, see #updateGizmoTransform) rather
+				// than the raw world-space table, so the drag always follows the
+				// direction the handle is drawn pointing.
+				axisDir = info.dir.clone().applyQuaternion(this.#gizmoParts.scale.getWorldQuaternion(new THREE.Quaternion()));
 				const camDir = new THREE.Vector3().subVectors(this.camera.position, origin).normalize();
 				const nrm = new THREE.Vector3().crossVectors(axisDir, camDir).cross(axisDir);
 				if (nrm.lengthSq() < 1e-6) nrm.set(0, 1, 0);
@@ -1683,14 +1925,57 @@ export class SceneEngine {
 			if (!isFinite(f)) return;
 			f = Math.max(0.02, Math.min(40, f));
 			if (editorStore.snapEnabled) f = Math.round(f * 10) / 10 || 0.1;
+			// Shift pins the edge opposite the handle in place instead of scaling
+			// from the object's centre — held live, so toggling it mid-drag
+			// switches modes without restarting the drag.
+			const anchorFarEdge = drag.scaleAxis !== 'uniform' && e.shiftKey;
 			drag.targets.forEach((t) => {
+				// With more than one object selected, "scale the selection" should
+				// also spread the objects apart from the shared pivot (drag.origin),
+				// same as translate/rotate already do — otherwise everything just
+				// grows or shrinks in place and overlaps. For a single selection
+				// this target's own pivot IS drag.origin, so the offset is zero and
+				// this is a no-op.
+				let groupPos = t.start;
+				if (t.startWorldPos) {
+					const offset = t.startWorldPos.clone().sub(drag.origin);
+					const newOffset =
+						drag.scaleAxis === 'uniform'
+							? offset.clone().multiplyScalar(f)
+							: offset.clone().addScaledVector(drag.axisDir!, offset.dot(drag.axisDir!) * (f - 1));
+					t.parent.updateWorldMatrix(true, false);
+					const local = t.parent.worldToLocal(drag.origin.clone().add(newOffset));
+					groupPos = { x: local.x, y: local.y, z: local.z };
+				}
 				if (drag.scaleAxis === 'uniform') {
 					t.node.transform.scale.x = round3(t.startScale.x * f);
 					t.node.transform.scale.y = round3(t.startScale.y * f);
 					t.node.transform.scale.z = round3(t.startScale.z * f);
+					t.node.transform.position.x = round3(groupPos.x);
+					t.node.transform.position.y = round3(groupPos.y);
+					t.node.transform.position.z = round3(groupPos.z);
 				} else {
 					const axis = drag.scaleAxis as Axis;
 					t.node.transform.scale[axis] = round3(t.startScale[axis] * f);
+					const minLocal = t.localBox?.min[axis];
+					if (anchorFarEdge && minLocal !== undefined && isFinite(minLocal)) {
+						// The handle always sits on the axis's positive side, so the
+						// far edge that stays put is the local minimum. Shifting the
+						// origin by how much *it* would otherwise have moved (in real,
+						// scale-inclusive units — localBox is unscaled geometry space)
+						// keeps it fixed in world space while the handle-side edge does
+						// the scaling.
+						const shift = new THREE.Vector3();
+						shift[axis] = minLocal * t.startScale[axis] * (1 - f);
+						if (t.startLocalQ) shift.applyQuaternion(t.startLocalQ);
+						t.node.transform.position.x = round3(groupPos.x + shift.x);
+						t.node.transform.position.y = round3(groupPos.y + shift.y);
+						t.node.transform.position.z = round3(groupPos.z + shift.z);
+					} else {
+						t.node.transform.position.x = round3(groupPos.x);
+						t.node.transform.position.y = round3(groupPos.y);
+						t.node.transform.position.z = round3(groupPos.z);
+					}
 				}
 			});
 		}

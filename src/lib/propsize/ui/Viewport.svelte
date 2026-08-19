@@ -3,7 +3,8 @@
 	import { docStore } from '$lib/propsize/core/document.svelte';
 	import { editorStore } from '$lib/propsize/core/editor.svelte';
 	import { TOOLBAR_ICONS } from '$lib/propsize/core/icons';
-	import { importFilesAsSiblings } from '$lib/propsize/import/local-import';
+	import { importFilesAsSiblings, buildSiblingResolver } from '$lib/propsize/import/local-import';
+	import { finalizeImport } from '$lib/propsize/import/import-flow';
 	import type { SceneEngine } from '$lib/propsize/core/scene-engine.svelte';
 	import type { Asset } from '$lib/propsize/core/types';
 
@@ -35,19 +36,25 @@
 		if (!files.length) return;
 		editorStore.toast(`Importing ${files.length > 1 ? files.length + ' files' : files[0].name}…`);
 		try {
+			const resolver = buildSiblingResolver(files);
 			const results = await importFilesAsSiblings(files);
 			if (!results.length) {
 				editorStore.toast('Drop a .glb, .gltf or .obj file');
 				return;
 			}
 			for (const r of results) {
-				engine.addImportedObject(r.object, {
+				const decision = await finalizeImport(r, r.file, resolver);
+				const meta = {
 					name: r.file.name.replace(/\.[^.]+$/, ''),
 					format: (r.file.name.split('.').pop()?.toLowerCase() ?? 'glb') as Asset['format'],
-					source: { type: 'embedded', dataUrl: r.dataUrl },
-					stats: r.stats
-				});
-				if (r.warnings.length) editorStore.toast(r.warnings[0]);
+					source: { type: 'embedded', dataUrl: r.dataUrl } as const
+				};
+				if (decision.split) {
+					engine.addImportedObjectSplit(decision.result.object, decision.parts, { ...meta, stats: decision.result.stats });
+				} else {
+					engine.addImportedObject(decision.result.object, { ...meta, stats: decision.result.stats });
+				}
+				if (decision.result.warnings.length) editorStore.toast(decision.result.warnings[0]);
 			}
 		} catch (err) {
 			console.error(err);

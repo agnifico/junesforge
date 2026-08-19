@@ -4,11 +4,11 @@
  * Builds an in-memory sibling resolver over the batch by filename, so
  * importModel() can find an OBJ's materials without a persisted folder.
  */
-import { importModel, normalizeImport, type ImportResult } from './loaders';
+import { importModel, type ImportResult, type SiblingResolver } from './loaders';
 
 const MODEL_EXTENSIONS = ['glb', 'gltf', 'obj'];
 
-export type LocalImportResult = ImportResult & { file: File; appliedScale: number; dataUrl: string };
+export type LocalImportResult = ImportResult & { file: File; dataUrl: string };
 
 function readAsDataUrl(file: File): Promise<string> {
 	return new Promise((resolve, reject) => {
@@ -33,28 +33,33 @@ export function dataUrlToFile(dataUrl: string, name: string, format: string): Fi
 	return new File([bytes], filename, { type: mime });
 }
 
-export async function importFilesAsSiblings(files: File[]): Promise<LocalImportResult[]> {
+/** OBJ/MTL directives sometimes carry a leading "./" or a subfolder the flat
+ *  file-picker batch doesn't preserve — fall back to a basename match. */
+export function buildSiblingResolver(files: File[]): SiblingResolver {
 	const byName = new Map<string, File>();
 	for (const f of files) byName.set(f.name, f);
 
-	const resolveSibling = async (relativePath: string) => {
-		// OBJ/MTL directives sometimes carry a leading "./" or a subfolder the
-		// flat file-picker batch doesn't preserve — fall back to a basename match.
+	return async (relativePath: string) => {
 		const direct = byName.get(relativePath);
 		if (direct) return direct;
 		const base = relativePath.split(/[\\/]/).pop();
 		return (base && byName.get(base)) || null;
 	};
+}
 
+export async function importFilesAsSiblings(files: File[]): Promise<LocalImportResult[]> {
+	const resolveSibling = buildSiblingResolver(files);
 	const modelFiles = files.filter((f) => MODEL_EXTENSIONS.includes(f.name.split('.').pop()?.toLowerCase() ?? ''));
 	const results: LocalImportResult[] = [];
 	for (const file of modelFiles) {
 		const result = await importModel(file, resolveSibling);
-		const { appliedScale } = normalizeImport(result.object);
 		// Picked one-off (no persisted folder to re-read from later), so the
 		// only durable reference we can save/export is the file's own bytes.
+		// Normalization now happens once, in import-flow.ts's finalizeImport(),
+		// after any missing-material prompt has had a chance to re-import —
+		// applying it here too would double the centering/scale offset.
 		const dataUrl = await readAsDataUrl(file);
-		results.push({ ...result, file, appliedScale, dataUrl });
+		results.push({ ...result, file, dataUrl });
 	}
 	return results;
 }

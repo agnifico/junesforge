@@ -2,8 +2,9 @@
 	import { editorStore } from '$lib/propsize/core/editor.svelte';
 	import { libraryStore } from '$lib/propsize/library/library-store.svelte';
 	import type { LibraryEntry } from '$lib/propsize/library/fs';
-	import { importModel, normalizeImport } from '$lib/propsize/import/loaders';
-	import { importFilesAsSiblings } from '$lib/propsize/import/local-import';
+	import { importModel } from '$lib/propsize/import/loaders';
+	import { importFilesAsSiblings, buildSiblingResolver } from '$lib/propsize/import/local-import';
+	import { finalizeImport } from '$lib/propsize/import/import-flow';
 	import LibraryPreview from './LibraryPreview.svelte';
 	import type { SceneEngine } from '$lib/propsize/core/scene-engine.svelte';
 	import type { Asset } from '$lib/propsize/core/types';
@@ -40,15 +41,20 @@
 		libraryStore.busy = `Importing ${entry.name}…`;
 		try {
 			const file = await libraryStore.library.read(entry);
-			const result = await importModel(file, libraryStore.library.siblingResolver(entry));
-			normalizeImport(result.object);
-			engine.addImportedObject(result.object, {
+			const resolver = libraryStore.library.siblingResolver(entry);
+			const result = await importModel(file, resolver);
+			const decision = await finalizeImport(result, file, resolver);
+			const meta = {
 				name: entry.name.replace(/\.[^.]+$/, ''),
 				format: entry.format as Asset['format'],
-				source: { type: 'library', path: entry.path },
-				stats: result.stats
-			});
-			reportImportIssues(result.warnings, result.untextured);
+				source: { type: 'library', path: entry.path } as const
+			};
+			if (decision.split) {
+				engine.addImportedObjectSplit(decision.result.object, decision.parts, { ...meta, stats: decision.result.stats });
+			} else {
+				engine.addImportedObject(decision.result.object, { ...meta, stats: decision.result.stats });
+			}
+			reportImportIssues(decision.result.warnings, decision.result.untextured);
 		} catch (e) {
 			console.error(e);
 			editorStore.toast(
@@ -68,20 +74,26 @@
 		if (!files.length) return;
 		libraryStore.busy = `Importing ${files.length > 1 ? files.length + ' files' : files[0].name}…`;
 		try {
+			const resolver = buildSiblingResolver(files);
 			const results = await importFilesAsSiblings(files);
 			if (!results.length) {
 				editorStore.toast('No .glb / .gltf / .obj files in that selection');
 				return;
 			}
 			for (const r of results) {
-				engine.addImportedObject(r.object, {
+				const decision = await finalizeImport(r, r.file, resolver);
+				const meta = {
 					name: r.file.name.replace(/\.[^.]+$/, ''),
 					format: (r.file.name.split('.').pop()?.toLowerCase() ?? 'glb') as Asset['format'],
-					source: { type: 'embedded', dataUrl: r.dataUrl },
-					stats: r.stats
-				});
-				if (r.warnings.length) editorStore.toast(r.warnings[0]);
-				else if (r.untextured) editorStore.toast('Imported without materials — use Override material to paint it');
+					source: { type: 'embedded', dataUrl: r.dataUrl } as const
+				};
+				if (decision.split) {
+					engine.addImportedObjectSplit(decision.result.object, decision.parts, { ...meta, stats: decision.result.stats });
+				} else {
+					engine.addImportedObject(decision.result.object, { ...meta, stats: decision.result.stats });
+				}
+				if (decision.result.warnings.length) editorStore.toast(decision.result.warnings[0]);
+				else if (decision.result.untextured) editorStore.toast('Imported without materials — use Override material to paint it');
 			}
 		} catch (err) {
 			console.error(err);

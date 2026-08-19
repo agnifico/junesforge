@@ -342,6 +342,9 @@
 		<div class="section-title">Imported model</div>
 		<div class="batch-note">
 			{node.stats.meshes} mesh{node.stats.meshes === 1 ? '' : 'es'}, {node.stats.triangles} triangles.
+			{#if node.part}
+				Part "{node.part.name}" of {asset?.name ?? 'the imported file'}.
+			{/if}
 			{#if asset}
 				Format {asset.format.toUpperCase()}.
 				{#if asset.source.type === 'library'}
@@ -358,11 +361,31 @@
 {/snippet}
 
 {#snippet singleInspector(node: SceneNode)}
-	<input
-		class="name-input"
-		value={node.name}
-		oninput={(e) => renameNode(node, (e.currentTarget as HTMLInputElement).value)}
-	/>
+	<div class="insp-sticky">
+		<input
+			class="name-input"
+			value={node.name}
+			oninput={(e) => renameNode(node, (e.currentTarget as HTMLInputElement).value)}
+		/>
+		{#if !isGroup(node)}
+			<div class="itabs">
+				<div
+					class="itab"
+					class:active={editorStore.inspectorTab === 'shape'}
+					onclick={() => (editorStore.inspectorTab = 'shape')}
+				>
+					Shape
+				</div>
+				<div
+					class="itab"
+					class:active={editorStore.inspectorTab === 'surface'}
+					onclick={() => (editorStore.inspectorTab = 'surface')}
+				>
+					Surface
+				</div>
+			</div>
+		{/if}
+	</div>
 
 	{#if isGroup(node)}
 		{@render transformSection(node)}
@@ -374,22 +397,6 @@
 			</div>
 		</div>
 	{:else if isPrimitive(node)}
-		<div class="itabs">
-			<div
-				class="itab"
-				class:active={editorStore.inspectorTab === 'shape'}
-				onclick={() => (editorStore.inspectorTab = 'shape')}
-			>
-				Shape
-			</div>
-			<div
-				class="itab"
-				class:active={editorStore.inspectorTab === 'surface'}
-				onclick={() => (editorStore.inspectorTab = 'surface')}
-			>
-				Surface
-			</div>
-		</div>
 		{#if editorStore.inspectorTab === 'shape'}
 			{@render transformSection(node)}
 			{@render geometrySection(node)}
@@ -409,22 +416,6 @@
 			{@render shadowSection(node)}
 		{/if}
 	{:else if isImported(node)}
-		<div class="itabs">
-			<div
-				class="itab"
-				class:active={editorStore.inspectorTab === 'shape'}
-				onclick={() => (editorStore.inspectorTab = 'shape')}
-			>
-				Shape
-			</div>
-			<div
-				class="itab"
-				class:active={editorStore.inspectorTab === 'surface'}
-				onclick={() => (editorStore.inspectorTab = 'surface')}
-			>
-				Surface
-			</div>
-		</div>
 		{#if editorStore.inspectorTab === 'shape'}
 			{@render transformSection(node)}
 			{@render importedInfoSection(node)}
@@ -913,9 +904,26 @@
 				Add primitives from the shape tray, then use the actions under the hierarchy to group, duplicate or delete.
 			</div>
 		{:else if single}
-			{@render singleInspector(single)}
+			<!-- Keyed on the selected id so switching objects tears down and
+			     rebuilds the fields below rather than patching them in place.
+			     Matters most for the native colour <input>s: a browser's colour
+			     picker (particularly macOS's floating system panel, which isn't
+			     otherwise tied to page focus) can be left open across a
+			     selection change, and only destroying the input closes it and
+			     guarantees the next open shows the newly-selected object's
+			     actual colour instead of a stale one. -->
+			{#key single.id}
+				{@render singleInspector(single)}
+			{/key}
 		{:else}
-			{@render multiInspector()}
+			<!-- Sorted before joining so the key reflects *membership*, not click
+			     order — ctrl-clicking the same set of objects in a different
+			     sequence (e.g. deselect-then-reselect one) would otherwise still
+			     change the key and tear the fields down, the same colour-picker
+			     problem the single-selection key above exists to avoid. -->
+			{#key [...docStore.selectedIds].sort().join(',')}
+				{@render multiInspector()}
+			{/key}
 		{/if}
 	</div>
 </div>

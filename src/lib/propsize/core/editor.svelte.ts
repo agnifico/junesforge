@@ -3,11 +3,23 @@ import { readLocal, writeLocal } from './storage';
 
 export type GizmoMode = 'translate' | 'rotate' | 'scale';
 
+export type PromptChoice = { label: string; value: string; primary?: boolean; danger?: boolean };
+export type PromptOptions = { title: string; body?: string; choices?: PromptChoice[] };
+
 class EditorStore {
 	gizmoMode = $state<GizmoMode>('translate');
 	showGrid = $state(true);
 	wireAll = $state(false);
 	bgColor = $state('#202325');
+
+	// ---- lighting ------------------------------------------------------------
+	lightIntensity = $state(1.15);
+	lightColor = $state('#fff2df');
+	ambientIntensity = $state(0.85);
+	/** Key light position, in degrees — 0° azimuth is +X, elevation is height
+	 *  above the horizon. Matches the studio's original fixed light angle. */
+	lightAzimuth = $state(34);
+	lightElevation = $state(51);
 
 	// ---- snapping ----------------------------------------------------------
 	// One toggle, two editable amounts. Cycling through a fixed list of steps
@@ -16,6 +28,13 @@ class EditorStore {
 	snapEnabled = $state(false);
 	snapStep = $state(0.5);
 	snapAngle = $state(15);
+
+	// ---- navigation ----------------------------------------------------------
+	/** Off by default, matching the traditional fixed-pivot orbit most 3D tools
+	 *  ship with: selecting something doesn't itself move the view. On, the
+	 *  pivot re-centres on whatever's selected (Blender's "Orbit Around
+	 *  Selection") — see `#recenterOrbitOnSelection` in the scene engine. */
+	orbitAroundSelection = $state(false);
 
 	// ---- settings ----------------------------------------------------------
 	settingsOpen = $state(false);
@@ -93,7 +112,13 @@ class EditorStore {
 					snapAngle: this.snapAngle,
 					showShortcutStrip: this.showShortcutStrip,
 					showImportJson: this.showImportJson,
-				dropAxis: this.dropAxis
+					orbitAroundSelection: this.orbitAroundSelection,
+				dropAxis: this.dropAxis,
+				lightIntensity: this.lightIntensity,
+				lightColor: this.lightColor,
+				ambientIntensity: this.ambientIntensity,
+				lightAzimuth: this.lightAzimuth,
+				lightElevation: this.lightElevation
 			})
 		);
 	}
@@ -109,7 +134,14 @@ class EditorStore {
 			if (Number.isFinite(s.snapAngle) && s.snapAngle > 0) this.snapAngle = s.snapAngle;
 			if (typeof s.showShortcutStrip === 'boolean') this.showShortcutStrip = s.showShortcutStrip;
 			if (typeof s.showImportJson === 'boolean') this.showImportJson = s.showImportJson;
+			if (typeof s.orbitAroundSelection === 'boolean') this.orbitAroundSelection = s.orbitAroundSelection;
 			if (s.dropAxis === 'x' || s.dropAxis === 'y' || s.dropAxis === 'z') this.dropAxis = s.dropAxis;
+			if (Number.isFinite(s.lightIntensity) && s.lightIntensity >= 0) this.lightIntensity = s.lightIntensity;
+			if (typeof s.lightColor === 'string') this.lightColor = s.lightColor;
+			if (Number.isFinite(s.ambientIntensity) && s.ambientIntensity >= 0)
+				this.ambientIntensity = s.ambientIntensity;
+			if (Number.isFinite(s.lightAzimuth)) this.lightAzimuth = s.lightAzimuth;
+			if (Number.isFinite(s.lightElevation)) this.lightElevation = s.lightElevation;
 		} catch {
 			/* ignore */
 		}
@@ -153,6 +185,36 @@ class EditorStore {
 		if (this.#toastTimer) clearTimeout(this.#toastTimer);
 		this.toastMsg = '';
 		this.toastAction = null;
+	}
+
+	/** A small generic popup for prompting/confirming/notifying — the one
+	 *  dialog shape the rest of Propsize should reach for instead of rolling
+	 *  its own modal. Resolves to the chosen button's `value`, or `null` if
+	 *  dismissed (Escape / backdrop click); callers should treat `null` as
+	 *  the safe, non-destructive default. */
+	activePrompt = $state<{
+		title: string;
+		body: string;
+		choices: PromptChoice[];
+		resolve: (v: string | null) => void;
+	} | null>(null);
+
+	prompt(opts: PromptOptions): Promise<string | null> {
+		return new Promise((resolve) => {
+			this.activePrompt = {
+				title: opts.title,
+				body: opts.body ?? '',
+				choices: opts.choices?.length ? opts.choices : [{ label: 'OK', value: 'ok', primary: true }],
+				resolve
+			};
+		});
+	}
+
+	resolvePrompt(value: string | null) {
+		const p = this.activePrompt;
+		if (!p) return;
+		this.activePrompt = null; // clear before resolving, in case the caller opens another prompt synchronously
+		p.resolve(value);
 	}
 }
 

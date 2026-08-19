@@ -31,6 +31,41 @@ import { defaultTransform, round3 } from './utils';
 const HISTORY_LIMIT = 100;
 const COALESCE_MS = 900;
 
+/**
+ * Names the original/copy pair for a top-level duplicate.
+ *
+ * "Object" duplicated for the first time promotes the original to "Object 1"
+ * and names the copy "Object 2" — the number only shows up once there's
+ * something to distinguish. Duplicating an already-numbered "Object 2" just
+ * increments to "Object 3"; the original keeps its name. Either way, if the
+ * natural next name is already taken by some unrelated object, fall back to
+ * "<base> <num> - <k>" rather than silently skipping ahead to a number that
+ * would misleadingly suggest it was derived from that unrelated object.
+ */
+function duplicateNames(sourceName: string, isTaken: (name: string) => boolean) {
+	const m = sourceName.match(/^(.*) (\d+)$/);
+	if (m) {
+		const base = m[1];
+		const num = parseInt(m[2], 10);
+		const plain = `${base} ${num + 1}`;
+		if (!isTaken(plain)) return { renameOriginal: null as string | null, copyName: plain };
+		let k = num + 1;
+		let alt = `${base} ${num} - ${k}`;
+		while (isTaken(alt)) alt = `${base} ${num} - ${++k}`;
+		return { renameOriginal: null as string | null, copyName: alt };
+	}
+	const base = sourceName;
+	const origCandidate = `${base} 1`;
+	const copyCandidate = `${base} 2`;
+	if (!isTaken(origCandidate) && !isTaken(copyCandidate)) {
+		return { renameOriginal: origCandidate, copyName: copyCandidate };
+	}
+	let k = 2;
+	let alt = `${base} 1 - ${k}`;
+	while (isTaken(alt)) alt = `${base} 1 - ${++k}`;
+	return { renameOriginal: isTaken(origCandidate) ? null : origCandidate, copyName: alt };
+}
+
 class DocumentStore {
 	doc = $state<PropsizeDoc>(emptyDoc());
 	selectedIds = $state<string[]>([]);
@@ -167,18 +202,21 @@ class DocumentStore {
 	/**
 	 * Duplicate a subtree. The copy keeps two of three coordinates — only X is
 	 * offset, by the source's own width so it lands beside rather than inside —
-	 * and the top-level clone is inserted directly below its original.
+	 * and the top-level clone is inserted directly below its original. See
+	 * `duplicateNames` for how the original and the copy get named.
 	 */
 	duplicate(id: string, widthOf: (id: string) => number, snap = 0): string | null {
 		const src = this.node(id);
 		if (!src) return null;
+		const isTaken = (name: string) => this.doc.nodes.some((n) => n.id !== id && n.name === name);
+		const { renameOriginal, copyName } = duplicateNames(src.name, isTaken);
 
 		const cloneInto = (srcId: string, parentId: string | null, sibling: boolean): string => {
 			const s = this.node(srcId)!;
 			const clone: SceneNode = structuredClone($state.snapshot(s)) as SceneNode;
 			clone.id = this.newId();
 			clone.parentId = parentId;
-			clone.name = `${s.name} copy`;
+			clone.name = srcId === id ? copyName : `${s.name} copy`;
 			if (parentId === s.parentId) {
 				const w = Math.max(0.5, widthOf(srcId));
 				const step = snap > 0 ? Math.max(snap, Math.round(w / snap) * snap) : w;
@@ -189,6 +227,7 @@ class DocumentStore {
 			return clone.id;
 		};
 
+		if (renameOriginal) src.name = renameOriginal;
 		return cloneInto(id, src.parentId, true);
 	}
 

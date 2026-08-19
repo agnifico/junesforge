@@ -79,13 +79,14 @@
 		const rect = svgEl!.getBoundingClientRect();
 		const px = ((e.clientX - rect.left) / rect.width) * W;
 		const py = ((e.clientY - rect.top) / rect.height) * H;
-		const snap = editorStore.snapEnabled ? editorStore.snapStep : 0;
+		// The 3D viewport's snap amount (often 0.5 units) is coarse next to a
+		// profile that's typically under 1 unit across — applying it here made
+		// dragging a point feel like it was fighting you, jumping between the
+		// two nearest multiples rather than landing where the cursor was. This
+		// editor has its own precise way to land exactly on the axis: the "To
+		// axis" buttons below.
 		let x = ux(px);
 		let y = uy(py);
-		if (snap) {
-			x = Math.round(x / snap) * snap;
-			y = Math.round(y / snap) * snap;
-		}
 		// x is a radius; letting it go negative folds the surface inside out.
 		return v2(Math.max(0, x), y);
 	}
@@ -139,8 +140,12 @@
 	function toggleSmooth() {
 		onchange(setAnchorSmooth(profile, selected, !isAnchorSmooth(profile, selected)), null);
 	}
-	function snapToAxis() {
-		onchange(moveAnchor(profile, selected, v2(0, pts[selected].y)), null);
+	/** Places the selected point exactly on one axis — X onto the axis of
+	 *  revolution (radius 0, closing the surface), Y onto the ground line
+	 *  (height 0) — precision a free-hand drag can't reliably hit. */
+	function snapToAxis(axis: 'x' | 'y') {
+		const p = pts[selected];
+		onchange(moveAnchor(profile, selected, axis === 'x' ? v2(0, p.y) : v2(p.x, 0)), null);
 	}
 
 	function onKeyDown(e: KeyboardEvent) {
@@ -169,9 +174,12 @@
 		onpointermove={onPointerMove}
 		onpointerup={onPointerUp}
 	>
-		<!-- ground line and axis of revolution -->
-		<line class="prof-ground" x1="0" y1={sy(0)} x2={W} y2={sy(0)} />
-		<line class="prof-axis" x1={sx(0)} y1="0" x2={sx(0)} y2={H} />
+		<!-- ground line and axis of revolution — inset by PAD like everything
+		     else drawn here, so the origin they cross sits with some room
+		     around it instead of running the guides flush to the panel's
+		     rounded corners. -->
+		<line class="prof-ground" x1={PAD} y1={sy(0)} x2={W - PAD} y2={sy(0)} />
+		<line class="prof-axis" x1={sx(0)} y1={PAD} x2={sx(0)} y2={H - PAD} />
 
 		<path class="prof-mirror" d={mirrored} />
 		<path class="prof-hit" d={outline} onpointerdown={onOutlineClick} role="presentation" />
@@ -204,10 +212,18 @@
 		<button class="btn sm" onclick={toggleSmooth}>
 			{isAnchorSmooth(profile, selected) ? 'Make corner' : 'Make smooth'}
 		</button>
-		<button class="btn sm" onclick={snapToAxis} title="Move this point onto the axis of revolution">
-			To axis
-		</button>
 		<button class="btn sm danger" onclick={deleteSelected} disabled={pts.length <= 2}>Delete</button>
+	</div>
+	<div class="prof-actions">
+		<div class="act-group">
+			<span class="act-group-label">To axis</span>
+			<button class="btn sm" onclick={() => snapToAxis('x')} title="Move this point onto the axis of revolution (radius 0)">
+				X
+			</button>
+			<button class="btn sm" onclick={() => snapToAxis('y')} title="Move this point onto the ground line (height 0)">
+				Y
+			</button>
+		</div>
 	</div>
 
 	<div class="field-label" style="margin-top:8px;"><span class="fname">Point {selected + 1} of {pts.length}</span></div>

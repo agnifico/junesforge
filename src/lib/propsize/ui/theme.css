@@ -19,6 +19,13 @@
 	--danger: #b6604f;
 	--danger-hi: #cf7a63;
 	--ok: #7fa86f;
+	/* Reserved for "ancestor of the current selection" in the Hierarchy — a
+	   cool tone deliberately far from brass so the two read as different
+	   *kinds* of highlight (what's selected vs. what merely contains it),
+	   not just different intensities of the same one. */
+	--steel: #6f93b3;
+	--steel-hi: #8fb3d1;
+	--steel-dim: #3f5266;
 	--radius: 6px;
 	/* The hierarchy panel's default width, shared with the topbar's brand block
 	   so the shape tray lines up with the panel edge below it. */
@@ -694,11 +701,23 @@
 .propsize-shell #tree {
 	flex: 1;
 	overflow-y: auto;
-	padding: 6px;
 	scrollbar-width: none;
 }
 .propsize-shell #tree::-webkit-scrollbar {
 	display: none;
+}
+/* The 6px gutter used to live on #tree itself, but position:sticky resolves
+   its `top` against the *padding* edge of the nearest scrolling ancestor —
+   and browsers don't agree on whether that padding is supposed to keep
+   scrolling out of the way once you've scrolled past it. Firefox leaves it
+   in place, so the ancestor-pins stack (which sticks to #tree) always sat
+   6px lower than the real content actually needing coverage, leaving a
+   sliver of whatever real row was underneath peeking through above it. Not
+   giving the scroll container itself any padding sidesteps the disagreement
+   entirely; this inner wrapper carries the same 6px instead, as an ordinary
+   (non-sticky-related) block. */
+.propsize-shell .tree-rows {
+	padding: 6px;
 }
 .propsize-shell .node-row {
 	position: relative;
@@ -719,6 +738,49 @@
 	background: rgba(201, 138, 75, 0.15);
 	border-color: var(--brass-dim);
 	color: var(--ink-0);
+}
+/* A group that contains the current selection — steel rather than brass so
+   "this holds what's selected" never reads as "this is selected". --anc-tint
+   is set per-row in Hierarchy.svelte, deeper ancestors tinted stronger. */
+.propsize-shell .node-row.ancestor {
+	background: var(--anc-tint, transparent);
+	border-color: var(--steel-dim);
+}
+.propsize-shell .node-row.ancestor .gicon {
+	color: var(--steel-hi);
+}
+.propsize-shell .node-row.ancestor:hover {
+	background: var(--anc-tint, transparent);
+	filter: brightness(1.25);
+}
+/* The pinned stack itself: sticky, with a real height (--pins-h, set in
+   Hierarchy.svelte) that's immediately cancelled by an equal negative bottom
+   margin — so it occupies genuine layout space (nothing to paint "outside
+   its own box") but leaves the rows after it undisplaced. An earlier version
+   used height:0 + overflow:visible instead, which relies on Firefox painting
+   escaped overflow content correctly mid-scroll; it doesn't always, leaving
+   a sliver of whatever real row was underneath peeking above the stack.
+   --anc-pin-bg (set per-row) is the steel tint pre-blended to an opaque
+   color, so each pinned row fully occludes whatever real row scrolls past
+   beneath it. */
+.propsize-shell .ancestor-pins {
+	position: sticky;
+	top: 0;
+	z-index: 4;
+	height: var(--pins-h, 0);
+	margin-bottom: calc(-1 * var(--pins-h, 0px));
+}
+.propsize-shell .node-row.pinned {
+	background: var(--anc-pin-bg, var(--bg-1));
+	border-color: var(--steel-dim);
+	box-shadow: 0 1px 0 var(--line);
+	cursor: pointer;
+}
+.propsize-shell .node-row.pinned .gicon {
+	color: var(--steel-hi);
+}
+.propsize-shell .node-row.pinned:hover {
+	filter: brightness(1.15);
 }
 .propsize-shell .node-row.drop-into {
 	outline: 1px dashed var(--brass);
@@ -927,6 +989,17 @@
 }
 .propsize-shell #inspect-body::-webkit-scrollbar {
 	display: none;
+}
+/* The object's name and its Shape/Surface tabs stay pinned at the top of the
+   panel while the fields below scroll — bleeds into #inspect-body's own
+   padding so it reads as part of the panel chrome, not a floating card. */
+.propsize-shell .insp-sticky {
+	position: sticky;
+	top: -12px;
+	z-index: 3;
+	margin: -12px -12px 0;
+	padding: 12px 12px 0;
+	background: var(--bg-1);
 }
 .propsize-shell .empty-inspect {
 	color: var(--ink-2);
@@ -1505,6 +1578,15 @@
 }
 .propsize-shell .ps-modal.wide {
 	width: min(920px, 94vw);
+}
+.propsize-shell .ps-modal.prompt-modal {
+	width: min(420px, 92vw);
+}
+.propsize-shell .prompt-body {
+	margin: 0;
+	font-size: 12.5px;
+	line-height: 1.6;
+	color: var(--ink-1);
 }
 .propsize-shell .ps-modal-head {
 	display: flex;

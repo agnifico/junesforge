@@ -141,7 +141,8 @@ function genNodeCode(node: SceneNode, parentVar: string, used: Set<string>, line
 	}
 
 	if (isImported(node)) {
-		lines.push(`${ind}// TODO: "${node.name}" is an imported model (${node.assetId}).`);
+		const partNote = node.part ? `, part "${node.part.name}"` : '';
+		lines.push(`${ind}// TODO: "${node.name}" is an imported model (${node.assetId}${partNote}).`);
 		lines.push(`${ind}// Propsize doesn't inline external model bytes into generated code —`);
 		lines.push(`${ind}// load it the way you load the rest of your assets, then apply:`);
 		const varName2 = varName + 'Group';

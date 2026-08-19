@@ -113,6 +113,15 @@ export type ImportedNode = NodeBase & {
 	receiveShadow: boolean;
 	/** Cached at import time so the inspector can show stats without a scene walk. */
 	stats: { meshes: number; triangles: number };
+	/** Set when this node is one constituent object split out of a
+	 *  multi-object import, rather than the whole file. `name` is matched
+	 *  first against the cached template's children (stable across a
+	 *  re-import that reorders children); `index` is the fallback. `center`
+	 *  is this part's own geometry centroid (see ImportPart) — it's what lets
+	 *  the live object be built as a wrapper whose *own* transform (driven by
+	 *  this node's transform, and what the gizmo pivots on) sits at the
+	 *  part's own centre rather than the whole file's shared origin. */
+	part: { index: number; name: string; center: Vec3 } | null;
 };
 
 export type SceneNode = PrimitiveNode | GroupNode | ImportedNode;

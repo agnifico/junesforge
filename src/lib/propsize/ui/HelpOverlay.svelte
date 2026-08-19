@@ -8,6 +8,7 @@
 		['Drag a ring', 'Rotate around that axis'],
 		['Drag arrow or ring', 'Transform along that axis'],
 		['Drag plane square', 'Move on that plane'],
+		['Shift + drag a scale knob', 'Scale from the far edge, not the centre'],
 		['WASD', 'Pan the camera'],
 		['Shift + WASD', 'Orbit the camera'],
 		['Arrows / Shift+Arrows', 'Nudge selection on XZ / Y'],

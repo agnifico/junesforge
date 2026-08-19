@@ -24,6 +24,10 @@ export type ImportResult = {
 	/** True when the file arrived without material information. */
 	untextured: boolean;
 	warnings: string[];
+	/** OBJ only: the .mtl this file references that couldn't be resolved —
+	 *  set so a caller can offer to locate it by hand, rather than parsing
+	 *  `warnings` strings to find out. */
+	missingMtl?: string | null;
 };
 
 export type SiblingResolver = (relativePath: string) => Promise<File | null>;
@@ -175,6 +179,7 @@ async function importObj(file: File, resolveSibling?: SiblingResolver): Promise<
 	const text = await file.text();
 	const objLoader = new OBJLoader();
 	let untextured = true;
+	let missingMtl: string | null = null;
 
 	const mtlName = findMtlReference(text);
 	if (mtlName && resolveSibling) {
@@ -187,16 +192,18 @@ async function importObj(file: File, resolveSibling?: SiblingResolver): Promise<
 			// Textures are decoded by now; release the temporary blob URLs.
 			queueMicrotask(revoke);
 		} else {
+			missingMtl = mtlName;
 			warnings.push(`Couldn't find ${mtlName} beside this file — importing without colours.`);
 		}
 	} else if (mtlName) {
+		missingMtl = mtlName;
 		warnings.push(`This OBJ references ${mtlName}. Add the folder as a library to load its colours.`);
 	} else {
 		warnings.push('This OBJ has no material file, so it imports untextured.');
 	}
 
 	const object = objLoader.parse(text);
-	return { object, stats: measure(object), untextured, warnings };
+	return { object, stats: measure(object), untextured, warnings, missingMtl };
 }
 
 /** OBJ files name their material library with a `mtllib` directive. */
@@ -238,7 +245,7 @@ async function buildMaterials(mtlText: string, resolveSibling: SiblingResolver) 
 	return { materials, revoke: () => urls.forEach(URL.revokeObjectURL) };
 }
 
-function measure(object: THREE.Object3D) {
+export function measure(object: THREE.Object3D) {
 	let meshes = 0;
 	let triangles = 0;
 	object.traverse((child) => {
@@ -249,6 +256,35 @@ function measure(object: THREE.Object3D) {
 		triangles += geo.index ? geo.index.count / 3 : (geo.attributes.position?.count ?? 0) / 3;
 	});
 	return { meshes, triangles: Math.round(triangles) };
+}
+
+/**
+ * The constituent objects inside one loaded model — its root's immediate
+ * children. This works for OBJ because OBJLoader emits exactly one child
+ * (a Mesh, possibly multi-material) per `o`/`g`-declared object, named from
+ * that declaration; it also happens to generalize to a glTF exported with
+ * several independent top-level nodes. A single-mesh import simply comes
+ * back with one part, which callers treat as "nothing to split".
+ */
+export type ImportPart = {
+	index: number;
+	name: string;
+	stats: { meshes: number; triangles: number };
+	/** This part's own geometry centroid, in the frame it sits in within the
+	 *  unsplit file (i.e. relative to the whole import's root, at identity).
+	 *  Used to give a split-out part a sane rotate/scale pivot — its own
+	 *  content's centre — instead of inheriting the whole file's shared
+	 *  origin (usually wherever the source file put "the base"). */
+	center: { x: number; y: number; z: number };
+};
+export function listImportParts(object: THREE.Object3D): ImportPart[] {
+	return object.children
+		.map((child, index) => {
+			const box = new THREE.Box3().setFromObject(child);
+			const c = isFinite(box.min.x) ? box.getCenter(new THREE.Vector3()) : new THREE.Vector3();
+			return { index, name: child.name || `Part ${index + 1}`, stats: measure(child), center: { x: c.x, y: c.y, z: c.z } };
+		})
+		.filter((p) => p.stats.meshes > 0);
 }
 
 /**

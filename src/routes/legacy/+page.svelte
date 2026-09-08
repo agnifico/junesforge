@@ -30,7 +30,7 @@
 	const bio = {
 		name: 'Agni',
 		role: 'Designer–Engineer',
-		tagline: 'I design things and build them too.',
+		tagline: 'At junesforge, I design things and build them too.',
 		historyLines: [
 			'Human psychology, math, materials, intent, stories,',
 			'for me, all are parameters of the same game called design.',

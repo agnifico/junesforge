@@ -50,7 +50,7 @@
 	<header class="top jf-in">
 		<div class="brand">
 			<img class="mark" src={c.brand.logo} alt="{c.brand.wordmark} logo" />
-			<span class="wordmark">{c.brand.wordmark}</span>
+			<!-- <span class="wordmark">{c.brand.wordmark}</span> -->
 		</div>
 
 		<!-- Opens in a new tab like every other outbound link here — see Products. -->
@@ -65,7 +65,13 @@
 	<!-- ── hero + the one featured piece ─────────────────────── -->
 	<main class="body">
 		<div class="hero jf-in">
-			<h1 class="name">{c.name}</h1>
+			<h1 class="name">
+				<!-- All three flush: any whitespace between these spans renders as a
+				     gap in the sentence. -->
+				<span class="greeting">{c.greeting}</span><span class="given">{c.name}</span><span
+					class="stop"></span
+				>
+			</h1>
 
 			<p class="tagline">
 				{#each c.tagline as seg, k (k)}
@@ -324,24 +330,61 @@
 		flex-direction: column;
 		justify-content: center;
 	}
+	/* One mono line, one size. The difference between the greeting and the name
+	   is carried entirely by weight and colour — no size step at all, which is
+	   what keeps it reading as a sentence someone said rather than a label
+	   stacked over a word. nowrap because a mono line that breaks mid-phrase
+	   loses the whole effect; at 16 characters it fits a 320px screen. */
 	.name {
-		margin: 0;
-		font-family: var(--serif);
-		font-weight: 500;
-		font-size: clamp(72px, 13vw, 190px);
-		line-height: 0.8;
-		letter-spacing: -0.035em;
-		color: var(--paper);
-		/* Bodoni's descenders overshoot the line box — keep the tagline clear */
-		padding-bottom: 0.16em;
-	}
-	.tagline {
-		margin: clamp(12px, 2vh, 26px) 0 0;
-		font-family: var(--body);
-		font-weight: 300;
-		font-size: clamp(21px, 2.6vw, 40px);
+		margin: clamp(8px, 1.8vh, 26px) 0 clamp(20px, 3.6vh, 46px);
+		font-family: var(--mono);
+		font-size: clamp(19px, 2.9vw, 42px);
 		line-height: 1.2;
 		color: var(--dust);
+		white-space: nowrap;
+	}
+	.greeting {
+		font-weight: 300;
+		word-spacing: -25%;
+	}
+	.given {
+		font-weight: 600;
+		color: var(--jade);
+		/* Underline is painted transparent and revealed on hover, so the text
+		   never reflows — declaring it only on :hover shifts the baseline. It is
+		   decoration, not a link: nothing happens, and the cursor says so. */
+		text-decoration: underline;
+		text-decoration-color: transparent;
+		text-decoration-thickness: 0.055em;
+		text-underline-offset: 0.18em;
+		cursor: default;
+		transition: text-decoration-color 0.3s ease;
+	}
+	.name:hover .given {
+		text-decoration-color: currentColor;
+	}
+	/* Outside .given on purpose — the full stop belongs to the sentence, not to
+	   the name, so it stays light and unaccented and the hover rule underlines
+	   "Agni" alone. */
+	.stop {
+		font-weight: 300;
+	}
+
+	/* Newsreader — the newspaper face — and now the largest thing in the hero.
+	   With the name line down to a small mono strip, this is what anchors the
+	   screen, so it takes the display size the name used to have. */
+	.tagline {
+		margin: 0;
+		font-family: var(--body);
+		font-weight: 400;
+		/* ~30% down from 3.3vw/56px. The floor stays at 27px so the narrow
+		   layout — where the spread already reads well — is unchanged; only the
+		   desktop end comes back. */
+		font-size: clamp(27px, 2.3vw, 40px);
+		letter-spacing: -0.012em;
+		line-height: 1.16;
+		color: var(--dust);
+		text-wrap: pretty;
 	}
 	/* "design things" and "build them" are the doors now */
 	.tag-link {

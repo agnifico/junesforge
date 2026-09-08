@@ -33,12 +33,16 @@ export const identity = {
 		href: '/propsize'
 	},
 
+	// One mono line: `greeting` sets light, `name` sets bold and accented.
+	// Trailing space on the greeting is load-bearing — the two <span>s are
+	// written flush in the markup so no whitespace sneaks between them.
+	greeting: 'Hello, I am ',
 	name: 'Agni',
 
 	/* The tagline doubles as the navigation. Segments carrying a `goto`
 	   become inline links into the deck; the rest is plain text. */
 	tagline: [
-		{ text: 'I ' },
+		{ text: 'At junesforge, I ' },
 		{ text: 'design things', goto: 1, tone: 'rust' },
 		{ br: true }, // hard break so each link owns a line
 		{ text: 'and ' },
@@ -263,14 +267,14 @@ export const gallery = {
 			tone: 'ink'
 		},
 		{
-			kicker: 'Event mark · Summit',
+			kicker: 'Conference · Logo',
 			title: 'ESG Summit',
 			src: '/images/ESG1.png',
 			href: 'https://dribbble.com/shots/27290136-ESG-An-Event-Logo',
 			tone: 'ink'
 		},
 		{
-			kicker: 'Event mark · Congress',
+			kicker: 'Conference · Logo',
 			title: 'Future Wellbeing',
 			src: '/images/FWC1.png',
 			href: 'https://dribbble.com/shots/27290166-Event-Logo-Future-Wellbeing-Congress',
@@ -292,7 +296,7 @@ export const gallery = {
 		},
 		{
 			kicker: 'Logoworks · Conference',
-			title: 'Logos & Type',
+			title: 'Event · Logo',
 			src: '/images/GCEC2.jpg',
 			fit: 'contain', // a mark on an empty field — cropping it just hides the logo
 			href: 'https://dribbble.com/shots/25752613-Forge-Blueprints',
@@ -309,7 +313,7 @@ export const roles = {
 	// states. The Freelance / Design · Branding · Web aside is gone for the same
 	// reason — the Design and Code panels establish the service list in full.
 	primary: {
-		title: 'Product Designer',
+		title: 'Product Designer and Developer',
 		meta: 'Full-time · Remote'
 	},
 	docs: [

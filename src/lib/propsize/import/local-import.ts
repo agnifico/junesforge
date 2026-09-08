@@ -4,9 +4,7 @@
  * Builds an in-memory sibling resolver over the batch by filename, so
  * importModel() can find an OBJ's materials without a persisted folder.
  */
-import { importModel, type ImportResult, type SiblingResolver } from './loaders';
-
-const MODEL_EXTENSIONS = ['glb', 'gltf', 'obj'];
+import { importModel, isSupportedModelFile, type ImportResult, type SiblingResolver } from './loaders';
 
 export type LocalImportResult = ImportResult & { file: File; dataUrl: string };
 
@@ -49,7 +47,7 @@ export function buildSiblingResolver(files: File[]): SiblingResolver {
 
 export async function importFilesAsSiblings(files: File[]): Promise<LocalImportResult[]> {
 	const resolveSibling = buildSiblingResolver(files);
-	const modelFiles = files.filter((f) => MODEL_EXTENSIONS.includes(f.name.split('.').pop()?.toLowerCase() ?? ''));
+	const modelFiles = files.filter((f) => isSupportedModelFile(f.name));
 	const results: LocalImportResult[] = [];
 	for (const file of modelFiles) {
 		const result = await importModel(file, resolveSibling);

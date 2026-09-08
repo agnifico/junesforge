@@ -13,7 +13,7 @@
 import { GEO_DEFS } from './geometry';
 import { shadeColor } from './materials';
 import { degToRadCode, f } from './utils';
-import { isGroup, isPrimitive, isImported } from './types';
+import { isGroup, isPrimitive, isImported, isAuthoredMesh } from './types';
 import type { SceneNode, MaterialSpec, TextureSpec } from './types';
 import { docStore } from './document.svelte';
 
@@ -22,7 +22,7 @@ function usedTextureHelpers(nodeIds: string[]): Set<TextureSpec['type']> {
 	const allIds = nodeIds.concat(nodeIds.flatMap((id) => docStore.descendants(id).map((n) => n.id)));
 	for (const id of allIds) {
 		const n = docStore.node(id);
-		if (!n || !isPrimitive(n)) continue;
+		if (!n || (!isPrimitive(n) && !isAuthoredMesh(n))) continue;
 		const tex = docStore.doc.materials[n.materialId]?.texture;
 		if (tex && tex.type !== 'none' && tex.type !== 'image') helpers.add(tex.type);
 	}
@@ -140,9 +140,10 @@ function genNodeCode(node: SceneNode, parentVar: string, used: Set<string>, line
 		return;
 	}
 
-	if (isImported(node)) {
-		const partNote = node.part ? `, part "${node.part.name}"` : '';
-		lines.push(`${ind}// TODO: "${node.name}" is an imported model (${node.assetId}${partNote}).`);
+	if (isImported(node) || isAuthoredMesh(node)) {
+		const note = isImported(node) && node.part ? `, part "${node.part.name}"` : '';
+		const kind = isAuthoredMesh(node) ? 'authored mesh' : 'imported model';
+		lines.push(`${ind}// TODO: "${node.name}" is an ${kind} (${node.assetId}${note}).`);
 		lines.push(`${ind}// Propsize doesn't inline external model bytes into generated code —`);
 		lines.push(`${ind}// load it the way you load the rest of your assets, then apply:`);
 		const varName2 = varName + 'Group';

@@ -2,7 +2,7 @@
 	import { editorStore } from '$lib/propsize/core/editor.svelte';
 	import { libraryStore } from '$lib/propsize/library/library-store.svelte';
 	import type { LibraryEntry } from '$lib/propsize/library/fs';
-	import { importModel } from '$lib/propsize/import/loaders';
+	import { importModel, SUPPORTED_MODEL_LABEL } from '$lib/propsize/import/loaders';
 	import { importFilesAsSiblings, buildSiblingResolver } from '$lib/propsize/import/local-import';
 	import { finalizeImport } from '$lib/propsize/import/import-flow';
 	import LibraryPreview from './LibraryPreview.svelte';
@@ -77,7 +77,7 @@
 			const resolver = buildSiblingResolver(files);
 			const results = await importFilesAsSiblings(files);
 			if (!results.length) {
-				editorStore.toast('No .glb / .gltf / .obj files in that selection');
+				editorStore.toast(`No model files in that selection (${SUPPORTED_MODEL_LABEL})`);
 				return;
 			}
 			for (const r of results) {

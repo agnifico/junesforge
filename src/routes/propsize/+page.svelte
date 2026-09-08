@@ -8,28 +8,26 @@
 	type Model = { slug: string; name: string; parts: number };
 	type StageEl = HTMLElement & { next: (dir?: number) => void; paused: boolean };
 
-	// Cycle order for the hero viewer.
-	const heroCycle = [
-		'the-gilded-boar-inn',
-		'city-gatehouse',
-		'market-fountain',
-		'watchtower',
-		'dovecote'
-	];
+	// Cycle order for the hero viewer. Three, not five: each entry is a 30-50KB
+	// document that gets fetched and built into 60-90 meshes, and the hero is
+	// the one stage that loads eagerly.
+	const heroCycle = ['the-gilded-boar-inn', 'city-gatehouse', 'watchtower'];
 
-	// Marquee row — order matches the design; part counts read off the actual
-	// model documents (static/showcase/models) rather than hand-typed.
+	// Marquee row — part counts read off the actual model documents
+	// (static/showcase/models) rather than hand-typed.
+	//
+	// Trimmed from ten to six. Ten meant ~360KB of documents and roughly 700
+	// meshes built the moment this slide came into view, which is what made the
+	// page lock up. Six covers the same range of building types; the rest of the
+	// pack is still in the editor's sample library. The remaining four
+	// documents stay in static/showcase/models — nothing was deleted.
 	const marqueeModels: Model[] = [
 		{ slug: 'the-gilded-boar-inn', name: 'The Gilded Boar Inn', parts: 77 },
 		{ slug: 'city-gatehouse', name: 'City Gatehouse', parts: 85 },
 		{ slug: 'blacksmith-s-forge', name: "Blacksmith's Forge", parts: 57 },
 		{ slug: 'market-fountain', name: 'Market Fountain', parts: 60 },
 		{ slug: 'watchtower', name: 'Watchtower', parts: 56 },
-		{ slug: 'timber-stable', name: 'Timber Stable', parts: 52 },
-		{ slug: 'garrison-post', name: 'Garrison Post', parts: 56 },
-		{ slug: 'palisade-kit', name: 'Palisade Kit', parts: 94 },
-		{ slug: 'dovecote', name: 'Dovecote', parts: 72 },
-		{ slug: 'justice-corner', name: 'Justice Corner', parts: 54 }
+		{ slug: 'palisade-kit', name: 'Palisade Kit', parts: 94 }
 	];
 
 	// What's currently showing in the hero stage — drives both the caption and
@@ -50,10 +48,20 @@
 	let activeSlide = -1;
 	let io: IntersectionObserver | undefined;
 
+	// Slides are `min-height`, not a fixed 100vh, so a short viewport can make one
+	// taller than the screen. Scroll to the element's real offset rather than
+	// multiplying by window.innerHeight, which silently desyncs the moment any
+	// slide overflows.
+	let slideEls: HTMLElement[] = [];
+
 	function goTo(i: number) {
 		const n = Math.max(slideCount, 1);
 		const clamped = Math.max(0, Math.min(i, n - 1));
-		window.scrollTo({ top: clamped * window.innerHeight, behavior: 'smooth' });
+		const el = slideEls[clamped];
+		window.scrollTo({
+			top: el ? el.offsetTop : clamped * window.innerHeight,
+			behavior: 'smooth'
+		});
 	}
 
 	// Slide rail. Earlier versions tried to make vertical scroll drive a
@@ -82,6 +90,7 @@
 		) as HTMLElement[];
 		const n = Math.max(slides.length, 1);
 		slideCount = n;
+		slideEls = slides;
 
 		const navs = navEl ? [...navEl.querySelectorAll<HTMLButtonElement>('[data-nav]')] : [];
 		const dots = dotsEl ? [...dotsEl.querySelectorAll<HTMLButtonElement>('[data-dot]')] : [];
@@ -98,28 +107,42 @@
 			if (i === activeSlide) return;
 			activeSlide = i;
 			navs.forEach((b, k) => {
-				b.style.color = k === i ? '#e2a35f' : '#6b6e6f';
+				b.style.color = k === i ? '#e2a35f' : '#7e8283';
 				b.style.borderBottomColor = k === i ? '#c98a4b' : 'transparent';
 			});
 			dots.forEach((b, k) => {
-				b.style.background = k === i ? '#c98a4b' : '#34383b';
+				b.style.background = k === i ? '#c98a4b' : '#2e3235';
 				b.style.width = k === i ? '40px' : '26px';
 			});
 		};
 
 		// Which slide is "active" is read straight off layout — whichever one
-		// is more than half in view — instead of derived from scroll-position
+		// covers the most screen — instead of derived from scroll-position
 		// math. That makes it impossible for the nav/dots to say one thing
 		// while the screen shows another.
+		//
+		// Compared against visible *height*, not intersectionRatio: ratio is a
+		// fraction of the element, so a slide taller than the viewport can
+		// never reach a fixed 0.5 threshold and the nav would just stop
+		// updating. Slides are min-height now, so that case is reachable.
+		const visible = new Map<HTMLElement, number>();
 		io = new IntersectionObserver(
 			(entries) => {
 				for (const entry of entries) {
-					if (entry.intersectionRatio > 0.5) {
-						paint(slides.indexOf(entry.target as HTMLElement));
-					}
+					visible.set(entry.target as HTMLElement, entry.intersectionRect.height);
 				}
+				let best = -1;
+				let bestH = 0;
+				slides.forEach((s, i) => {
+					const h = visible.get(s) ?? 0;
+					if (h > bestH) {
+						bestH = h;
+						best = i;
+					}
+				});
+				if (best >= 0) paint(best);
 			},
-			{ threshold: [0.5] }
+			{ threshold: [0, 0.25, 0.5, 0.75, 1] }
 		);
 		slides.forEach((s) => io!.observe(s));
 		paint(0);
@@ -158,7 +181,17 @@
 		track.addEventListener('pointerenter', onEnter);
 		track.addEventListener('pointerleave', onLeave);
 
+		// The drift used to run for the life of the page, rewriting a transform on
+		// every card every frame even while the hero slide was the one on screen
+		// — a style recalc a frame, forever, for something nobody could see. It
+		// now parks itself whenever the rail is off screen.
+		let live = false;
+
 		const frame = (t: number) => {
+			if (!live) {
+				marqueeRaf = 0; // parked; the observer below starts it again
+				return;
+			}
 			const dt = Math.min((t - last) / 1000, 0.1);
 			last = t;
 			if (!hovering) offset = (offset + speed * dt) % total;
@@ -171,9 +204,23 @@
 			});
 			marqueeRaf = requestAnimationFrame(frame);
 		};
-		marqueeRaf = requestAnimationFrame(frame);
+
+		const vis = new IntersectionObserver(
+			([entry]) => {
+				live = entry.isIntersecting;
+				if (live && !marqueeRaf) {
+					// Reset the clock, or the first frame back gets the whole
+					// off-screen gap as its delta and the row jumps.
+					last = performance.now();
+					marqueeRaf = requestAnimationFrame(frame);
+				}
+			},
+			{ threshold: 0 }
+		);
+		vis.observe(track);
 
 		return () => {
+			vis.disconnect();
 			track.removeEventListener('pointerenter', onEnter);
 			track.removeEventListener('pointerleave', onLeave);
 		};
@@ -193,6 +240,14 @@
 		let stopMarquee = () => {};
 		let onModelChange: ((e: Event) => void) | null = null;
 
+		// Scroll snapping has to live on <html> (that's the element that actually
+		// scrolls here), but SvelteKit never *removes* a route's stylesheet once
+		// it's been added — so a plain `:global(html){scroll-snap-type:...}` stayed
+		// glued to the document for the rest of the session and turned every page
+		// navigated to afterwards, the editor included, into a scroll jail. Gating
+		// it on a class this route owns keeps the rule route-scoped in practice.
+		document.documentElement.classList.add('propsize-rail');
+
 		// propsize-stage registers a custom element and touches `window` at
 		// module scope, so it's loaded client-side only, after the elements
 		// referencing it already exist in the DOM — the browser upgrades them
@@ -211,6 +266,7 @@
 		stopMarquee = startMarquee(26);
 
 		return () => {
+			document.documentElement.classList.remove('propsize-rail');
 			cancelAnimationFrame(marqueeRaf);
 			io?.disconnect();
 			stopMarquee();
@@ -474,25 +530,46 @@
 		-webkit-font-smoothing: antialiased;
 	}
 	/* The rail's actual scroll container — see the rail/slides section below
-	   for why it lives here instead of on an inner div. */
-	:global(html) {
+	   for why it lives here instead of on an inner div. The class is added by
+	   onMount and removed on teardown: SvelteKit keeps a route's stylesheet in
+	   the document forever once loaded, so an unconditional `html` rule here
+	   would keep snapping every other route for the rest of the session. */
+	:global(html.propsize-rail) {
 		scroll-snap-type: y mandatory;
 	}
-	:global(a) {
+	/* Scoped to .page rather than left global for the same reason — these used
+	   to repaint every link on the site after a single visit to /propsize. */
+	.page :global(a) {
 		color: #c98a4b;
 		text-decoration: none;
 	}
-	:global(a:hover) {
+	.page :global(a:hover) {
 		color: #e2a35f;
 	}
-	:global(::selection) {
+	.page :global(::selection) {
 		background: rgba(201, 138, 75, 0.3);
 	}
 
 	.page {
-		background: #141516;
-		color: #eee9e2;
+		background: #1a1b1d;
+		color: #ddd8d1;
 		font-family: Inter, sans-serif;
+
+		/* This page used to run #eee9e2 ink on a #141516 ground — about 16.5:1,
+		   which glares at the headline end, while the small mono labels at
+		   #6b6e6f sat near 4:1 and went murky. Both extremes at once, which is
+		   what read as harsh. The whole stack is compressed: ground and every
+		   surface lifted off near-black, primary ink pulled down, dim labels
+		   lifted. It also lets the brass become the loudest thing on the page,
+		   which is what an accent is for.
+
+		   --line: divider between regions. --edge: rim on a raised surface. */
+		--line: #26292b;
+		--edge: #2e3235;
+		/* One-pixel top highlight, as if lit from above. The cheapest way to
+		   make a dark surface read as a physical panel instead of a rectangle
+		   with a border around it. */
+		--lift: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 	}
 
 	/* ---- header ---------------------------------------------------------- */
@@ -509,7 +586,7 @@
 		padding: 0 32px;
 		background: rgba(20, 21, 22, 0.86);
 		backdrop-filter: blur(10px);
-		border-bottom: 1px solid #26292b;
+		border-bottom: 1px solid var(--line);
 	}
 	.brand {
 		display: flex;
@@ -525,7 +602,7 @@
 		font-weight: 700;
 		font-size: 16px;
 		letter-spacing: 0.02em;
-		color: #eee9e2;
+		color: #ddd8d1;
 	}
 	.topnav {
 		display: flex;
@@ -540,7 +617,7 @@
 		background: none;
 		border: none;
 		border-bottom: 1px solid transparent;
-		color: #6b6e6f;
+		color: #7e8283;
 		font: inherit;
 		letter-spacing: inherit;
 		text-transform: inherit;
@@ -580,15 +657,18 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 8px;
-		background: #232628;
-		border: 1px solid #34383b;
-		color: #eee9e2;
+		background: #292c2e;
+		border: 1px solid var(--edge);
+		color: #ddd8d1;
 		font-family: Inter, sans-serif;
 		font-weight: 500;
 		font-size: 14px;
 		padding: 12px 18px;
 		border-radius: 7px;
 		cursor: pointer;
+	}
+	.btn-secondary {
+		box-shadow: var(--lift);
 	}
 	.btn-secondary:hover {
 		border-color: #8a6138;
@@ -600,10 +680,10 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: #232628;
-		border: 1px solid #34383b;
+		background: #292c2e;
+		border: 1px solid var(--edge);
 		border-radius: 5px;
-		color: #a3a6a5;
+		color: #a9acab;
 		cursor: pointer;
 	}
 	.icon-btn:hover {
@@ -628,10 +708,15 @@
 	}
 	.slide {
 		width: 100%;
-		height: 100vh;
+		/* min-height, not height: a fixed 100vh clipped the taller slides (the
+		   models slide is three info cards + a heading + a ~260px marquee) on
+		   short viewports, and mandatory snapping meant the overflow could not
+		   be scrolled to at all. dvh keeps mobile address-bar chrome from
+		   stealing a slide's worth of height. */
+		min-height: 100vh;
+		min-height: 100dvh;
 		box-sizing: border-box;
 		scroll-snap-align: start;
-		scroll-snap-stop: always;
 	}
 	.slide-inner {
 		max-width: 1240px;
@@ -642,11 +727,17 @@
 	/* ---- slide 1: hero ------------------------------------------------------ */
 	.slide-hero {
 		padding: 60px 32px 0;
-		background: radial-gradient(ellipse 900px 520px at 70% 34%, #23262a 0%, #141516 72%);
+		background: radial-gradient(ellipse 900px 520px at 70% 34%, #292d31 0%, #1a1b1d 72%);
+		/* The other three slides already centre their content this way. The hero
+		   used `height: 100%` on .hero-grid instead, which resolves to `auto`
+		   now that .slide is min-height — so it centres by flex like the rest. */
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
 	}
 	.hero-grid {
 		max-width: 1240px;
-		height: 100%;
+		width: 100%;
 		margin: 0 auto;
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) minmax(0, 1.02fr);
@@ -661,13 +752,13 @@
 		font-size: 10px;
 		letter-spacing: 0.11em;
 		text-transform: uppercase;
-		color: #6b6e6f;
+		color: #7e8283;
 		margin-bottom: 20px;
 	}
 	.eyebrow-rule {
 		width: 14px;
 		height: 1px;
-		background: #34383b;
+		background: var(--edge);
 	}
 	.h1 {
 		font-family: 'Space Grotesk', sans-serif;
@@ -687,7 +778,7 @@
 	.lede {
 		font-size: 16px;
 		line-height: 1.65;
-		color: #a3a6a5;
+		color: #a9acab;
 		margin: 0 0 28px;
 		max-width: 46ch;
 		text-wrap: pretty;
@@ -707,7 +798,7 @@
 		font-size: 10px;
 		letter-spacing: 0.09em;
 		text-transform: uppercase;
-		color: #6b6e6f;
+		color: #7e8283;
 	}
 	.scroll-hint svg {
 		width: 14px;
@@ -716,10 +807,12 @@
 
 	.hero-panel {
 		position: relative;
-		border: 1px solid #34383b;
+		border: 1px solid var(--edge);
 		border-radius: 12px;
-		background: linear-gradient(180deg, #1e2123, #171819);
-		box-shadow: 0 30px 70px rgba(0, 0, 0, 0.5);
+		background: linear-gradient(180deg, #242628, #1d1f21);
+		box-shadow:
+			var(--lift),
+			0 30px 70px rgba(0, 0, 0, 0.5);
 		overflow: hidden;
 	}
 	.hero-panel-bar {
@@ -727,15 +820,15 @@
 		align-items: center;
 		gap: 8px;
 		padding: 9px 12px;
-		border-bottom: 1px solid #26292b;
-		background: #1c1e20;
+		border-bottom: 1px solid var(--line);
+		background: #222426;
 	}
 	.hero-panel-label {
 		font-family: 'JetBrains Mono', monospace;
 		font-size: 9.5px;
 		letter-spacing: 0.09em;
 		text-transform: uppercase;
-		color: #6b6e6f;
+		color: #7e8283;
 	}
 	.hero-panel-nav {
 		margin-left: auto;
@@ -744,7 +837,7 @@
 	}
 	.hero-stage-wrap {
 		position: relative;
-		background: radial-gradient(ellipse at 50% 32%, #23262a 0%, #131415 78%);
+		background: radial-gradient(ellipse at 50% 32%, #292d31 0%, #171819 78%);
 	}
 	:global(.hero-stage) {
 		display: block;
@@ -781,8 +874,8 @@
 		align-items: center;
 		gap: 6px;
 		background: rgba(28, 30, 32, 0.9);
-		border: 1px solid #34383b;
-		color: #eee9e2 !important;
+		border: 1px solid var(--edge);
+		color: #ddd8d1 !important;
 		font-size: 12px;
 		font-weight: 500;
 		padding: 7px 12px;
@@ -813,9 +906,10 @@
 	}
 	.info-card {
 		padding: 20px;
-		background: #1a1c1e;
-		border: 1px solid #26292b;
+		background: #202224;
+		border: 1px solid var(--line);
 		border-radius: 10px;
+		box-shadow: var(--lift);
 	}
 	.info-eyebrow {
 		font-family: 'JetBrains Mono', monospace;
@@ -833,7 +927,7 @@
 	.info-body {
 		font-size: 13px;
 		line-height: 1.6;
-		color: #a3a6a5;
+		color: #a9acab;
 		margin: 0;
 		text-wrap: pretty;
 	}
@@ -869,7 +963,7 @@
 		max-width: 38ch;
 		font-size: 13px;
 		line-height: 1.6;
-		color: #a3a6a5;
+		color: #a9acab;
 		text-wrap: pretty;
 	}
 
@@ -878,9 +972,9 @@
 		height: clamp(186px, 30vh, 262px);
 		flex: none;
 		overflow: hidden;
-		border-top: 1px solid #26292b;
-		border-bottom: 1px solid #26292b;
-		background: linear-gradient(180deg, #171819, #141516);
+		border-top: 1px solid var(--line);
+		border-bottom: 1px solid var(--line);
+		background: linear-gradient(180deg, #1d1f21, #1a1b1d);
 	}
 	.marquee-card {
 		position: absolute;
@@ -890,9 +984,9 @@
 		width: 290px;
 		display: flex;
 		flex-direction: column;
-		border: 1px solid #26292b;
+		border: 1px solid var(--line);
 		border-radius: 10px;
-		background: #1a1c1e;
+		background: #202224;
 		overflow: hidden;
 		will-change: transform;
 	}
@@ -908,12 +1002,12 @@
 		gap: 8px;
 		padding: 0 11px;
 		height: 40px;
-		border-top: 1px solid #26292b;
+		border-top: 1px solid var(--line);
 	}
 	.marquee-card-name {
 		font-size: 12.5px;
 		font-weight: 500;
-		color: #eee9e2;
+		color: #ddd8d1;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -922,7 +1016,7 @@
 		margin-left: auto;
 		font-family: 'JetBrains Mono', monospace;
 		font-size: 9.5px;
-		color: #6b6e6f;
+		color: #7e8283;
 		flex: none;
 	}
 
@@ -941,33 +1035,33 @@
 	.tutorial-card {
 		display: block;
 		padding: 18px;
-		background: #1a1c1e;
-		border: 1px dashed #34383b;
+		background: #202224;
+		border: 1px dashed var(--edge);
 		border-radius: 10px;
 	}
 	.tutorial-card:hover {
 		border-color: #8a6138;
-		background: #1e2123;
+		background: #242628;
 	}
 	.tutorial-eyebrow {
 		font-family: 'JetBrains Mono', monospace;
 		font-size: 9.5px;
 		letter-spacing: 0.09em;
 		text-transform: uppercase;
-		color: #6b6e6f;
+		color: #7e8283;
 		margin-bottom: 10px;
 	}
 	.tutorial-title {
 		font-family: 'Space Grotesk', sans-serif;
 		font-weight: 600;
 		font-size: 16px;
-		color: #eee9e2;
+		color: #ddd8d1;
 		margin-bottom: 6px;
 	}
 	.tutorial-body {
 		font-size: 12.5px;
 		line-height: 1.6;
-		color: #6b6e6f;
+		color: #7e8283;
 	}
 
 	/* ---- slide 4: about -------------------------------------------------- */
@@ -984,21 +1078,24 @@
 	}
 	.about-card {
 		padding: 40px;
-		background: linear-gradient(160deg, #1e2123, #171819);
-		border: 1px solid #34383b;
+		background: linear-gradient(160deg, #242628, #1d1f21);
+		border: 1px solid var(--edge);
 		border-radius: 12px;
+		box-shadow:
+			var(--lift),
+			0 20px 50px rgba(0, 0, 0, 0.35);
 	}
 	.about-lede {
 		font-size: 17px;
 		line-height: 1.65;
-		color: #eee9e2;
+		color: #ddd8d1;
 		margin: 0 0 14px;
 		text-wrap: pretty;
 	}
 	.about-body {
 		font-size: 14.5px;
 		line-height: 1.7;
-		color: #a3a6a5;
+		color: #a9acab;
 		margin: 0 0 26px;
 		text-wrap: pretty;
 	}
@@ -1011,7 +1108,7 @@
 		font-family: 'JetBrains Mono', monospace;
 		font-size: 10.5px;
 		letter-spacing: 0.06em;
-		color: #6b6e6f;
+		color: #7e8283;
 	}
 	.about-foot-by {
 		margin-left: auto;
@@ -1035,8 +1132,123 @@
 		height: 4px;
 		border: none;
 		border-radius: 2px;
-		background: #34383b;
+		background: var(--edge);
 		padding: 0;
 		cursor: pointer;
+	}
+
+	/* ---- responsive ---------------------------------------------------------
+	   The page had no breakpoints at all: the hero stayed a two-column grid and
+	   the info cards stayed 3-up all the way down to phone widths, which shredded
+	   the body copy into one word per line. Slides are min-height now, so these
+	   can reflow and grow taller instead of being clipped. */
+
+	/* Tablet / small laptop: the hero's side-by-side split is the first thing
+	   to break, since the stage panel needs real width to read as a viewer. */
+	@media (max-width: 960px) {
+		.hero-grid {
+			grid-template-columns: minmax(0, 1fr);
+			gap: 32px;
+		}
+		.lede {
+			max-width: none;
+		}
+		:global(.hero-stage) {
+			height: min(42vh, 320px);
+		}
+		.models-cards {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+		.tutorial-grid {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+		.models-sub {
+			max-width: none;
+			margin-left: 0;
+		}
+	}
+
+	/* Phones. The topnav's four labels don't fit beside the brand and the CTA —
+	   the dots at the bottom already navigate the same four slides, so the nav
+	   is dropped rather than wrapped into a second row. */
+	@media (max-width: 720px) {
+		.topbar {
+			height: 54px;
+			gap: 12px;
+			padding: 0 16px;
+		}
+		.topnav {
+			display: none;
+		}
+		.slide-hero,
+		.slide-tutorials,
+		.slide-about {
+			padding: 78px 18px 48px;
+		}
+		.slide-models {
+			padding: 78px 0 48px;
+		}
+		.models-cards,
+		.models-heading {
+			padding: 0 18px;
+		}
+		.models-cards {
+			grid-template-columns: minmax(0, 1fr);
+			gap: 12px;
+		}
+		.tutorial-grid {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.info-card {
+			padding: 16px;
+		}
+		.h1 {
+			font-size: clamp(30px, 8.4vw, 40px);
+		}
+		.lede {
+			font-size: 15px;
+		}
+		/* The eyebrow is three items separated by a rule; stacked, the rule is
+		   just a stray dash, so it goes. */
+		.eyebrow {
+			flex-wrap: wrap;
+			gap: 6px;
+			margin-bottom: 16px;
+		}
+		.eyebrow-rule {
+			display: none;
+		}
+		.hero-actions .btn-primary,
+		.hero-actions .btn-secondary {
+			flex: 1 1 auto;
+			justify-content: center;
+		}
+		.scroll-hint {
+			margin-top: 26px;
+		}
+		.about-card {
+			padding: 24px;
+		}
+		.about-lede {
+			font-size: 15.5px;
+		}
+		.about-body {
+			font-size: 13.5px;
+		}
+		.about-foot {
+			gap: 10px;
+		}
+		.about-foot-by {
+			margin-left: 0;
+		}
+	}
+
+	/* Snapping is a desktop affordance here. On a phone the slides are taller
+	   than the screen, so forcing a snap point at each one fights the scroll
+	   instead of guiding it. */
+	@media (max-width: 720px), (max-height: 600px) {
+		:global(html.propsize-rail) {
+			scroll-snap-type: none;
+		}
 	}
 </style>

@@ -189,7 +189,8 @@ function normalizeProfile(raw: unknown, fallback: Profile): Profile {
 /** A document may name a kind, or we infer one from the fields it carries. */
 function inferKind(raw: Record<string, unknown>): SceneNode['kind'] {
 	const k = raw.kind;
-	if (k === 'primitive' || k === 'group' || k === 'imported') return k;
+	if (k === 'primitive' || k === 'group' || k === 'imported' || k === 'mesh') return k;
+	if (typeof raw.assetId === 'string' && typeof raw.materialId === 'string' && !raw.type) return 'mesh';
 	if (typeof raw.assetId === 'string') return 'imported';
 	if (typeof raw.type === 'string' || isObj(raw.geometry)) return 'primitive';
 	return 'group';
@@ -237,6 +238,7 @@ export function normalizeDoc(input: unknown): NormalizeResult | null {
 			parentId: typeof raw.parentId === 'string' ? raw.parentId : null,
 			visible: bool(raw.visible, true),
 			locked: bool(raw.locked, false),
+			dataLink: typeof raw.dataLink === 'string' && raw.dataLink ? raw.dataLink : null,
 			transform: normalizeTransform(raw.transform)
 		};
 
@@ -260,6 +262,26 @@ export function normalizeDoc(input: unknown): NormalizeResult | null {
 				receiveShadow: bool(raw.receiveShadow, true),
 				stats: { meshes: num(stats.meshes, 0), triangles: num(stats.triangles, 0) },
 				part
+			});
+			continue;
+		}
+
+		if (kind === 'mesh') {
+			const stats = isObj(raw.stats) ? raw.stats : {};
+			let materialId = typeof raw.materialId === 'string' ? raw.materialId : '';
+			if (!materialId || !materials[materialId]) {
+				materialId = `m_repaired_${raw.id}`;
+				materials[materialId] = defaultMaterial();
+				addedMaterials++;
+			}
+			nodes.push({
+				...base,
+				kind: 'mesh',
+				assetId: str(raw.assetId, ''),
+				materialId,
+				castShadow: bool(raw.castShadow, true),
+				receiveShadow: bool(raw.receiveShadow, true),
+				stats: { vertices: num(stats.vertices, 0), triangles: num(stats.triangles, 0) }
 			});
 			continue;
 		}

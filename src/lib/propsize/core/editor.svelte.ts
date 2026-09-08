@@ -2,6 +2,9 @@ import type { MaterialSpec } from './types';
 import { readLocal, writeLocal } from './storage';
 
 export type GizmoMode = 'translate' | 'rotate' | 'scale';
+export type EditSelectMode = 'vertex' | 'edge' | 'face';
+export type Axis = 'x' | 'y' | 'z';
+export type TransformStyle = 'together' | 'each';
 
 export type PromptChoice = { label: string; value: string; primary?: boolean; danger?: boolean };
 export type PromptOptions = { title: string; body?: string; choices?: PromptChoice[] };
@@ -47,6 +50,12 @@ class EditorStore {
 	dropAxis = $state<'x' | 'y' | 'z'>('y');
 	inspectorTab = $state<'shape' | 'surface'>('shape');
 	batchIncludeChildren = $state(true);
+	/** Multi-object rotate/scale: one pivot vs each object's own origin. */
+	transformStyle = $state<TransformStyle>('together');
+	/** Axes in the link group. Two or more on → those axes scale together. */
+	scaleLink = $state({ x: false, y: false, z: false });
+	/** Screen-space box select overlay, in viewport-local CSS pixels. */
+	marquee = $state<{ x: number; y: number; w: number; h: number } | null>(null);
 	collapsed = $state<Set<string>>(new Set());
 	exportOpen = $state(false);
 	exportTab = $state<'code' | 'json' | 'r3f' | 'threlte'>('code');
@@ -56,12 +65,28 @@ class EditorStore {
 	leftPanelOpen = $state(true);
 	rightPanelOpen = $state(true);
 	leftTab = $state<'hierarchy' | 'library'>('hierarchy');
+	/** Isolation is a view on one node, not a second document. Null = scene. */
+	isolatedId = $state<string | null>(null);
+	isolationTool = $state<'model' | 'paint'>('model');
+	editSelectMode = $state<EditSelectMode>('vertex');
+	modelProportional = $state(false);
+	modelPropRadius = $state(1);
 	toastMsg = $state('');
 	materialClipboard = $state<MaterialSpec | null>(null);
 	recentColors = $state<string[]>([]);
 
 	snapVal(v: number) {
 		return this.snapEnabled ? Math.round(v / this.snapStep) * this.snapStep : v;
+	}
+
+	linkedScaleAxes(driver: Axis): Axis[] {
+		const on = (['x', 'y', 'z'] as const).filter((a) => this.scaleLink[a]);
+		if (on.length >= 2 && this.scaleLink[driver]) return [...on];
+		return [driver];
+	}
+
+	toggleScaleLink(axis: Axis) {
+		this.scaleLink = { ...this.scaleLink, [axis]: !this.scaleLink[axis] };
 	}
 
 	toggleSnap() {

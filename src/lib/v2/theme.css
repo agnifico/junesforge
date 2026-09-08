@@ -1,0 +1,518 @@
+/* =============================================================
+   V2 DECK — global stylesheet.
+   Deliberately NOT scoped: every panel component shares these
+   classes so the whole deck is tuned from one file.
+   All class names are prefixed `jf-` to avoid colliding with the
+   existing site's styles.
+   ============================================================= */
+
+.jf-root {
+	--ink: #14110e; /* near-black ground */
+	--paper: #e9e1d0; /* cream */
+	--rust: #c4452a;
+	--dark-rust: #78453b;
+	--jade: #3fb08d;
+	--jade-deep: #1f6b58;
+	--forest: #0e2a24; /* contact panel ground */
+	--brass: #a59271;
+	--stone: #8c8272; /* muted type on dark */
+	--stone-dk: #7a7161; /* muted type on cream */
+	--ash: #a39b8e;
+	--dust: #cfc5b2;
+	--slate: #4a4237;
+
+	--serif: 'Bodoni Moda', Georgia, serif;
+	--body: 'Newsreader', Georgia, serif;
+	--mono: 'Martian Mono', ui-monospace, monospace;
+	/* Subheads: service rows, product titles, the featured-work title, the role
+	   history. Deliberately NOT --serif: Bodoni is a didone, so at subhead sizes
+	   its hairlines thin out and its hyphens, slashes and brackets nearly
+	   vanish — and running it for both the display and the rows beneath left the
+	   two levels reading as one weight of the same voice.
+
+	   This is --body at 600 rather than a fourth family. A sans was tried and
+	   rejected: with the deck already Bodoni + Newsreader + Martian Mono, a
+	   neutral grotesque had no shared DNA with the didone above it and read as
+	   an imported UI font. Newsreader's punctuation is several times heavier
+	   than Bodoni's, which was the whole problem, and the weight jump alone
+	   carries the hierarchy. Costs no extra font request. */
+	--subhead: 'Newsreader', Georgia, serif;
+
+	--pad-y: clamp(18px, 3.4vw, 52px);
+	--pad-x: clamp(18px, 3.4vw, 52px);
+	--pad-r: clamp(38px, 4.6vw, 66px); /* extra right pad clears the nav rail */
+
+	--px: 0; /* pointer parallax, -0.5 … 0.5 */
+	--py: 0;
+	--slide: 900ms;
+	--ease: cubic-bezier(0.72, 0.02, 0.24, 1);
+
+	position: fixed;
+	inset: 0;
+	overflow: hidden;
+	background: var(--ink);
+	font-family: var(--body);
+	touch-action: pan-y;
+}
+
+.jf-root *,
+.jf-root *::before,
+.jf-root *::after {
+	box-sizing: border-box;
+}
+.jf-root a {
+	color: inherit;
+	text-decoration: none;
+}
+.jf-root ::selection {
+	background: var(--rust);
+	color: var(--paper);
+}
+
+/* ---- stage / screens --------------------------------------- */
+.jf-stage {
+	position: absolute;
+	inset: 0;
+	transition: transform var(--slide) var(--ease);
+	will-change: transform;
+}
+
+.jf-screen {
+	position: absolute;
+	left: 0;
+	width: 100%;
+	height: 100dvh;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+}
+/* panels whose column of text can outgrow the viewport scroll internally */
+.jf-scroll {
+	overflow-y: auto;
+	overflow-x: hidden;
+	scrollbar-width: none;
+}
+.jf-scroll::-webkit-scrollbar {
+	display: none;
+}
+
+.jf-pad {
+	padding: var(--pad-y) var(--pad-r) var(--pad-y) var(--pad-x);
+}
+
+/* enter / exit staging, driven by data-state on the screen */
+.jf-in {
+	transition:
+		transform 1s cubic-bezier(0.2, 0.7, 0.2, 1),
+		opacity 0.7s ease;
+}
+[data-state='active'] .jf-in {
+	transform: translateY(0);
+	opacity: 1;
+}
+[data-state='after'] .jf-in {
+	transform: translateY(34px);
+	opacity: 0.12;
+}
+[data-state='before'] .jf-in {
+	transform: translateY(-34px);
+	opacity: 0.12;
+}
+
+/* ---- grounds ----------------------------------------------- */
+.jf-dark {
+	background: var(--ink);
+	color: var(--paper);
+}
+.jf-light {
+	background: var(--paper);
+	color: var(--ink);
+}
+.jf-forest {
+	background: var(--forest);
+	color: var(--paper);
+}
+
+/* ---- textures ---------------------------------------------- */
+.jf-grain,
+.jf-grid {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+}
+.jf-grain {
+	background-image: radial-gradient(rgba(233, 225, 208, 0.05) 1px, transparent 1px);
+	background-size: 3px 3px;
+}
+.jf-grain.on-light {
+	background-image: radial-gradient(rgba(20, 17, 14, 0.055) 1px, transparent 1px);
+}
+.jf-grid {
+	background-image:
+		linear-gradient(rgba(31, 107, 88, 0.14) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(31, 107, 88, 0.14) 1px, transparent 1px);
+	background-size: 44px 44px;
+}
+.jf-bloom {
+	position: absolute;
+	pointer-events: none;
+}
+
+/* ---- type scale -------------------------------------------- */
+.jf-kicker {
+	font-family: var(--mono);
+	font-size: 10.5px;
+	font-weight: 400;
+	letter-spacing: 0.22em;
+	text-transform: uppercase;
+	color: var(--stone);
+}
+.jf-kicker.on-light {
+	color: var(--stone-dk);
+}
+.jf-micro {
+	font-family: var(--mono);
+	font-size: 9.5px;
+	letter-spacing: 0.22em;
+	text-transform: uppercase;
+}
+.jf-display {
+	margin: clamp(4px, 1vw, 12px) 0 0;
+	font-family: var(--serif);
+	font-weight: 500;
+	font-size: clamp(54px, 11vw, 150px);
+	line-height: 0.86;
+	letter-spacing: -0.025em;
+}
+.jf-title {
+	font-family: var(--serif);
+	font-weight: 500;
+	line-height: 0.9;
+	letter-spacing: -0.02em;
+	font-size: clamp(40px, 7vw, 96px);
+	margin: clamp(4px, 0.8vw, 10px) 0 clamp(12px, 2vw, 26px);
+}
+.jf-lede {
+	margin: clamp(6px, 1vw, 12px) 0 0;
+	max-width: min(40ch, 100%);
+	font-size: clamp(15px, 1.5vw, 19px);
+	font-weight: 300;
+	line-height: 1.4;
+	color: var(--ash);
+	text-wrap: pretty;
+}
+.jf-lede.on-light {
+	color: var(--slate);
+}
+.jf-rust {
+	color: var(--rust);
+}
+.jf-jade {
+	color: var(--jade);
+}
+.jf-brass {
+	color: var(--brass);
+}
+
+/* ---- service list (Design / Code) -------------------------- */
+.jf-list {
+	margin-top: clamp(14px, 2.4vw, 32px);
+	display: flex;
+	flex-direction: column;
+	border-top: 1px solid rgba(233, 225, 208, 0.16);
+}
+.jf-list.on-light {
+	border-top-color: rgba(20, 17, 14, 0.18);
+}
+.jf-row {
+	display: flex;
+	gap: clamp(12px, 2vw, 26px);
+	align-items: baseline;
+	padding: clamp(10px, 1.6vw, 18px) 6px;
+	border-bottom: 1px solid rgba(233, 225, 208, 0.16);
+	transition: background 0.25s ease;
+}
+.jf-list.on-light .jf-row {
+	border-bottom-color: rgba(20, 17, 14, 0.18);
+}
+.jf-row:hover {
+	background: rgba(63, 176, 141, 0.1);
+}
+.jf-list.on-light .jf-row:hover {
+	background: rgba(196, 69, 42, 0.07);
+}
+.jf-row-n {
+	font-family: var(--mono);
+	font-size: 10px;
+	letter-spacing: 0.18em;
+	flex: 0 0 auto;
+}
+.jf-row-title {
+	font-family: var(--subhead);
+	font-weight: 600;
+	/* Trimmed from the original Bodoni scale: Newsreader carries a larger
+	   x-height, so matching the old size would have it out-shouting the display.
+	   Tracking stays near-neutral — the negative tracking a sans wanted just
+	   crowds a serif's serifs. */
+	font-size: clamp(22px, 2.7vw, 35px);
+	line-height: 1.12;
+	letter-spacing: -0.005em;
+}
+.jf-row-blurb {
+	font-size: clamp(14px, 1.4vw, 17px);
+	font-weight: 300;
+	line-height: 1.35;
+	max-width: min(52ch, 100%);
+	color: var(--ash);
+	text-wrap: pretty;
+}
+.jf-list.on-light .jf-row-blurb {
+	color: var(--slate);
+}
+
+/* ---- side art column --------------------------------------- */
+.jf-side {
+	position: relative;
+	min-width: 0;
+	min-height: 0;
+	display: flex;
+	overflow: hidden;
+}
+
+/* ---- image slot (placeholder until art lands) -------------- */
+.jf-slot {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-items: center;
+	overflow: hidden;
+	background: rgba(20, 17, 14, 0.18);
+}
+.jf-slot img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	display: block;
+}
+.jf-slot-empty {
+	position: absolute;
+	inset: 6px;
+	display: grid;
+	place-items: center;
+	text-align: center;
+	padding: 10px;
+	border: 1px dashed rgba(233, 225, 208, 0.35);
+	border-radius: 2px;
+	font-family: var(--mono);
+	font-size: 9px;
+	letter-spacing: 0.18em;
+	text-transform: uppercase;
+	color: rgba(233, 225, 208, 0.65);
+	background: repeating-linear-gradient(
+		45deg,
+		rgba(233, 225, 208, 0.04) 0 8px,
+		transparent 8px 16px
+	);
+}
+
+/* ---- wireframe cube ---------------------------------------- */
+.jf-cube-wrap {
+	position: relative;
+	perspective: 900px;
+	transition: transform 0.6s ease-out;
+}
+.jf-cube {
+	position: relative;
+	transform-style: preserve-3d;
+	animation: jf-wire-spin 26s linear infinite;
+}
+.jf-cube > span {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-items: center;
+}
+
+@keyframes jf-wire-spin {
+	from {
+		transform: rotateX(-24deg) rotateY(18deg);
+	}
+	to {
+		transform: rotateX(-24deg) rotateY(378deg);
+	}
+}
+@keyframes jf-spin {
+	from {
+		transform: rotateX(-16deg) rotateY(0deg);
+	}
+	to {
+		transform: rotateX(-16deg) rotateY(360deg);
+	}
+}
+@keyframes jf-pulse-dot {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.25;
+	}
+}
+@keyframes jf-hint-bob {
+	0%,
+	100% {
+		transform: translateY(0);
+	}
+	50% {
+		transform: translateY(6px);
+	}
+}
+
+.jf-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentColor;
+	animation: jf-pulse-dot 2s ease-in-out infinite;
+}
+
+/* ---- nav rail ---------------------------------------------- */
+.jf-rail {
+	position: fixed;
+	top: 50%;
+	right: clamp(7px, 0.9vw, 13px);
+	transform: translateY(-50%);
+	z-index: 40;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+}
+.jf-rail-label {
+	writing-mode: vertical-rl;
+	font-family: var(--mono);
+	font-size: 8.5px;
+	letter-spacing: 0.28em;
+	text-transform: uppercase;
+	margin-bottom: 10px;
+	transition: color 0.4s ease;
+}
+/* Buttons, not links: the rail moves the deck, it does not navigate anywhere,
+   and as <a href="#pN"> a pre-hydration click did a real fragment navigation. */
+.jf-rail button {
+	display: flex;
+	width: 46px;
+	height: 46px;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+	background: none;
+	border: 0;
+	padding: 0;
+	cursor: pointer;
+	-webkit-appearance: none;
+	appearance: none;
+}
+.jf-rail button:focus-visible {
+	outline: 2px solid var(--rust);
+	outline-offset: -8px;
+	border-radius: 3px;
+}
+.jf-rail button span {
+	display: block;
+	transition:
+		width 0.4s ease,
+		height 0.4s ease,
+		background 0.4s ease;
+}
+
+.jf-progress {
+	position: fixed;
+	left: 0;
+	top: 0;
+	height: 2px;
+	background: var(--rust);
+	z-index: 45;
+	transition: width var(--slide) var(--ease);
+}
+
+/* ---- narrow ------------------------------------------------ */
+@media (max-width: 760px) {
+	.jf-root {
+		/* The rail is hidden below, so the right pad no longer has to clear it
+		   and every panel gets that ~24px of measure back. */
+		--pad-r: var(--pad-x);
+	}
+	/* Position tips are desk furniture: on a phone the deck is already a
+	   vertical swipe, and the rail was just clutter down the right edge. */
+	.jf-rail {
+		display: none;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.jf-stage,
+	.jf-in,
+	.jf-progress {
+		transition-duration: 1ms;
+	}
+	.jf-cube,
+	.jf-dot {
+		animation: none;
+	}
+}
+
+/* ---- split layout (Design / Code) --------------------------- */
+.jf-split {
+	position: absolute;
+	inset: 0;
+	display: flex;
+}
+.jf-split.reverse {
+	flex-direction: row-reverse;
+}
+.jf-split-text {
+	position: relative;
+	flex: 1 1 58%;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+}
+.jf-split .jf-side {
+	flex: 1 1 34%;
+}
+@media (max-width: 760px) {
+	/* Narrow layout for both split panels: art pinned to the top, copy settled
+	   against the bottom, the leftover height opening up between them.
+
+	   Both panels order the DOM text-then-art, so column-reverse is what lifts
+	   the art up. Code already got that for free from `.reverse` (which exists
+	   to put its wireframe on the left at desk width); Design, being plain
+	   `column`, dropped its art to the bottom instead — that was the flip. */
+	.jf-split,
+	.jf-split.reverse {
+		flex-direction: column-reverse;
+		justify-content: space-between;
+	}
+	.jf-split .jf-side {
+		flex: 0 0 auto;
+		height: 30dvh;
+	}
+	.jf-split .jf-split-text {
+		/* Deliberately not `flex: 1`. The block has to stay its content's own
+		   height, or it stretches back up to meet the art and space-between has
+		   nothing left to distribute. It can still shrink and scroll (.jf-scroll)
+		   when the copy is taller than the room the art leaves. */
+		flex: 0 1 auto;
+		/* Keeps the last line off the iPhone home indicator. The deck is a fixed,
+		   full-viewport surface rendered with viewport-fit=cover, so there is no
+		   document flow below this to do it for us. max() rather than a sum so
+		   phones without an inset still get a real margin, and phones with one
+		   don't get it stacked on top of the padding. */
+		padding-bottom: max(
+			calc(var(--pad-y) + 12px),
+			calc(var(--pad-y) + env(safe-area-inset-bottom, 0px))
+		);
+	}
+}

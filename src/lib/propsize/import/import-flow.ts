@@ -56,6 +56,10 @@ function mergeResolver(base: SiblingResolver | undefined, extra: File[]): Siblin
 	};
 }
 
+/** Above this many parts, splitting produces more tree rows than anyone wants
+ *  to manage, so the file comes in as one model without asking. */
+const SPLIT_PROMPT_LIMIT = 12;
+
 function namesPreview(parts: ImportPart[], max = 4): string {
 	const names = parts.map((p) => p.name);
 	if (names.length <= max) return names.join(', ');
@@ -91,23 +95,30 @@ export async function finalizeImport(
 		}
 	}
 
+	// One normalization point for every call site — centering/grounding/scale
+	// happens exactly once, here, rather than being duplicated (and easy to
+	// double-apply) at each caller. It must run *before* listImportParts(), so
+	// a part's recorded centre is measured in the same frame the cached
+	// template ends up in.
+	normalizeImport(current.object);
+
 	const parts = listImportParts(current.object);
 	let split = false;
-	if (parts.length > 1) {
+	// Splitting is the exception, not the default. Most models are wanted as
+	// one object, and a file with dozens of nodes turns into an unusable wall
+	// of tree rows — so only offer the choice when the result would plausibly
+	// be worth managing by hand, and merge quietly otherwise.
+	if (parts.length > 1 && parts.length <= SPLIT_PROMPT_LIMIT) {
 		const choice = await editorStore.prompt({
 			title: `${parts.length} objects found`,
-			body: `"${file.name}" contains ${parts.length} separate objects (${namesPreview(parts)}). Import them as one combined model, or keep them separate so each can be moved, hidden or recoloured on its own?`,
+			body: `"${file.name}" contains ${parts.length} separate objects (${namesPreview(parts)}). Import as one model, or keep them separate so each can be moved, hidden or recoloured on its own?`,
 			choices: [
-				{ label: 'Keep merged', value: 'merged' },
-				{ label: `Split into ${parts.length}`, value: 'split', primary: true }
+				{ label: 'Import as one model', value: 'merged', primary: true },
+				{ label: `Split into ${parts.length}`, value: 'split' }
 			]
 		});
 		split = choice === 'split';
 	}
 
-	// One normalization point for every call site — centering/grounding/scale
-	// happens exactly once, here, rather than being duplicated (and easy to
-	// double-apply) at each caller.
-	normalizeImport(current.object);
 	return split ? { split: true, result: current, parts } : { split: false, result: current };
 }

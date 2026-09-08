@@ -3,7 +3,7 @@ import type { GeometryParams, PrimitiveType, Profile } from './types';
 import { isProfile } from './types';
 import { degToRadCode, f } from './utils';
 import { ICONS } from './icons';
-import { defaultProfile, profileToPoints } from './profile';
+import { defaultProfile, defaultShapeProfile, profileToPoints, profileToShape } from './profile';
 
 export type GeoField = {
 	key: string;
@@ -26,6 +26,8 @@ export type GeoDef = {
 	code: (p: GeometryParams) => string;
 	/** Authored from a 2D outline — the inspector shows the profile editor. */
 	profile?: boolean;
+	/** Lathe silhouettes are radii; extrude outlines are a closed XY shape. */
+	profileKind?: 'lathe' | 'shape';
 };
 
 // Angles live in the document as degrees, matching rotation and torus `arc`;
@@ -33,6 +35,28 @@ export type GeoDef = {
 const n = (p: GeometryParams, key: string) => p[key] as number;
 const rad = (p: GeometryParams, key: string) => ((p[key] as number) * Math.PI) / 180;
 const prof = (p: GeometryParams): Profile => (isProfile(p.profile) ? p.profile : defaultProfile());
+const shapeProf = (p: GeometryParams): Profile =>
+	isProfile(p.profile) ? p.profile : defaultShapeProfile();
+
+function emitShapeConstructor(profile: Profile): string {
+	const lines = ['(() => {', '  const s = new THREE.Shape();', `  s.moveTo(${f(profile.start.x)}, ${f(profile.start.y)});`];
+	for (const seg of profile.segments) {
+		if (seg.type === 'line') {
+			lines.push(`  s.lineTo(${f(seg.to.x)}, ${f(seg.to.y)});`);
+		} else if (seg.type === 'quad') {
+			lines.push(
+				`  s.quadraticCurveTo(${f(seg.ctrl.x)}, ${f(seg.ctrl.y)}, ${f(seg.to.x)}, ${f(seg.to.y)});`
+			);
+		} else {
+			lines.push(
+				`  s.bezierCurveTo(${f(seg.c1.x)}, ${f(seg.c1.y)}, ${f(seg.c2.x)}, ${f(seg.c2.y)}, ${f(seg.to.x)}, ${f(seg.to.y)});`
+			);
+		}
+	}
+	if (profile.closed !== false) lines.push('  s.closePath();');
+	lines.push('  return s;', '})()');
+	return lines.join('\n');
+}
 
 /** Shared trailing fields for the shapes that can be swept through part of a turn. */
 const ARC_FIELDS: GeoField[] = [
@@ -291,6 +315,7 @@ export const GEO_DEFS: Record<PrimitiveType, GeoDef> = {
 		label: 'Lathe',
 		icon: ICONS.lathe,
 		profile: true,
+		profileKind: 'lathe',
 		// The outline is revolved around Y, so a partial sweep leaves a cutaway —
 		// useful for showing a vessel's inside, or for half a column against a wall.
 		defaults: { profile: defaultProfile(), segments: 16, curveSegments: 12, phiStart: 0, phiLength: 360 },
@@ -302,17 +327,54 @@ export const GEO_DEFS: Record<PrimitiveType, GeoDef> = {
 		],
 		build: (p) =>
 			new THREE.LatheGeometry(
-				profileToPoints(prof(p), n(p, 'curveSegments')),
+				profileToPoints(prof(p), n(p, 'curveSegments')).map((v) => new THREE.Vector2(Math.max(0, v.x), v.y)),
 				n(p, 'segments'),
 				rad(p, 'phiStart'),
 				rad(p, 'phiLength')
 			),
 		code: (p) => {
 			const pts = profileToPoints(prof(p), n(p, 'curveSegments'))
-				.map((v) => `new THREE.Vector2(${f(v.x)}, ${f(v.y)})`)
+				.map((v) => `new THREE.Vector2(${f(Math.max(0, v.x))}, ${f(v.y)})`)
 				.join(', ');
 			return `new THREE.LatheGeometry([${pts}], ${p.segments}, ${degToRadCode(n(p, 'phiStart'))}, ${degToRadCode(n(p, 'phiLength'))})`;
 		}
+	},
+	extrude: {
+		label: 'Extrude',
+		icon: ICONS.extrude,
+		profile: true,
+		profileKind: 'shape',
+		defaults: {
+			profile: defaultShapeProfile(),
+			depth: 0.35,
+			steps: 1,
+			bevelEnabled: true,
+			bevelThickness: 0.04,
+			bevelSize: 0.04,
+			bevelSegments: 1,
+			curveSegments: 8
+		},
+		fields: [
+			{ key: 'depth', label: 'Depth', min: 0.02, max: 4, step: 0.02 },
+			{ key: 'steps', label: 'Steps', min: 1, max: 12, step: 1, int: true },
+			{ key: 'bevelEnabled', label: 'Bevel', bool: true },
+			{ key: 'bevelThickness', label: 'Bevel thick', min: 0, max: 0.4, step: 0.01 },
+			{ key: 'bevelSize', label: 'Bevel size', min: 0, max: 0.4, step: 0.01 },
+			{ key: 'bevelSegments', label: 'Bevel segs', min: 1, max: 8, step: 1, int: true },
+			{ key: 'curveSegments', label: 'Curve detail', min: 2, max: 32, step: 1, int: true }
+		],
+		build: (p) =>
+			new THREE.ExtrudeGeometry(profileToShape(shapeProf(p)), {
+				depth: n(p, 'depth'),
+				steps: n(p, 'steps'),
+				bevelEnabled: !!p.bevelEnabled,
+				bevelThickness: n(p, 'bevelThickness'),
+				bevelSize: n(p, 'bevelSize'),
+				bevelSegments: n(p, 'bevelSegments'),
+				curveSegments: n(p, 'curveSegments')
+			}),
+		code: (p) =>
+			`new THREE.ExtrudeGeometry(${emitShapeConstructor(shapeProf(p))}, { depth: ${f(n(p, 'depth'))}, steps: ${p.steps}, bevelEnabled: ${!!p.bevelEnabled}, bevelThickness: ${f(n(p, 'bevelThickness'))}, bevelSize: ${f(n(p, 'bevelSize'))}, bevelSegments: ${p.bevelSegments}, curveSegments: ${p.curveSegments} })`
 	}
 };
 
@@ -321,7 +383,7 @@ export const PRIMITIVE_TYPES = Object.keys(GEO_DEFS) as PrimitiveType[];
 export function defaultGroundY(type: PrimitiveType) {
 	// A lathe profile is authored upward from y = 0, so it already sits on the
 	// grid — lifting it would float the object.
-	if (type === 'lathe') return 0;
+	if (type === 'lathe' || type === 'extrude') return 0;
 	const def = GEO_DEFS[type].defaults;
 	if ('height' in def && typeof def.height === 'number') return def.height / 2;
 	if ('radius' in def && typeof def.radius === 'number') return def.radius * 0.75;

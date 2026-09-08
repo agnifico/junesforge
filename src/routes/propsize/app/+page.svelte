@@ -101,6 +101,17 @@
 
 <svelte:head>
 	<title>Propsize Editor</title>
+	<!-- theme.css styles the whole editor in Space Grotesk / Inter / JetBrains Mono.
+	     None of those are in app.html's global font link, so without this the editor
+	     only rendered correctly when you arrived here via a client-side nav from
+	     /propsize (which leaves its own font <link> in the head) — a direct load or
+	     a refresh fell back to system fonts and looked broken. -->
+	<link rel="preconnect" href="https://fonts.googleapis.com" />
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+	<link
+		href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+		rel="stylesheet"
+	/>
 </svelte:head>
 
 <div class="propsize-shell">

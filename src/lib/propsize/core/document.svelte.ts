@@ -15,6 +15,7 @@ import type {
 	GroupNode,
 	ImportedNode,
 	MaterialSpec,
+	MeshNode,
 	PrimitiveNode,
 	PrimitiveType,
 	PropsizeDoc,
@@ -22,7 +23,7 @@ import type {
 	TextureSpec,
 	Vec3
 } from './types';
-import { emptyDoc, isGroup, isMeshNode, isPrimitive } from './types';
+import { emptyDoc, isAuthoredMesh, isGroup, isImported, isMeshNode, isPrimitive } from './types';
 import { GEO_DEFS, defaultGroundY } from './geometry';
 import { defaultMaterial, defaultTexture, shadeColor } from './materials';
 import { randomPaletteColor } from './palette';
@@ -30,6 +31,10 @@ import { defaultTransform, round3 } from './utils';
 
 const HISTORY_LIMIT = 100;
 const COALESCE_MS = 900;
+
+/** One undo step. See `DocumentStore.#snapshot` for why assets are held apart
+ *  from the JSON rather than serialised into it. */
+type Snapshot = { json: string; assets: Record<string, Asset> };
 
 /**
  * Names the original/copy pair for a top-level duplicate.
@@ -73,8 +78,8 @@ class DocumentStore {
 	// $state, not plain arrays: canUndo/canRedo below are getters that read
 	// their .length, and only $state mutations (push/pop/length=0) notify
 	// Svelte to re-evaluate expressions like the topbar's `disabled={...}`.
-	#undo = $state<string[]>([]);
-	#redo = $state<string[]>([]);
+	#undo = $state<Snapshot[]>([]);
+	#redo = $state<Snapshot[]>([]);
 	#lastKey: string | null = null;
 	#lastAt = 0;
 
@@ -118,9 +123,9 @@ class DocumentStore {
 		return this.rootsOf(this.selectedIds);
 	}
 
-	selectionMeshes(includeChildren = true) {
+	selectionMeshes(includeChildren = true): (PrimitiveNode | ImportedNode | MeshNode)[] {
 		const seen = new Set<string>();
-		const out: SceneNode[] = [];
+		const out: (PrimitiveNode | ImportedNode | MeshNode)[] = [];
 		for (const id of this.selectedIds) {
 			const n = this.node(id);
 			if (!n) continue;
@@ -153,14 +158,53 @@ class DocumentStore {
 		this.#redo.length = 0;
 	}
 
-	#snapshot() {
-		return JSON.stringify({ doc: this.doc, selectedIds: this.selectedIds });
+	/**
+	 * A history entry.
+	 *
+	 * The scene graph is small and gets a plain JSON round-trip. Assets are the
+	 * opposite: `source.dataUrl` holds base64 model bytes, baked mesh payloads
+	 * and embedded images, and serialising *those* into all hundred entries
+	 * turned every `mark()` — every slider grab, every gizmo drag — into a
+	 * multi-megabyte stringify, and the history itself into hundreds of
+	 * megabytes of near-identical copies.
+	 *
+	 * So assets are stored structurally instead: each entry gets its own map
+	 * (cheap — a few hundred bytes) whose values are the *same* `source`
+	 * objects the document holds. That's safe precisely because nothing
+	 * mutates a `source` in place; anything that changes an asset's bytes
+	 * replaces the object wholesale (see `#commitMesh`), so an older entry
+	 * keeps pointing at the older bytes. Copy-on-write, with no copying.
+	 */
+	#snapshot(): Snapshot {
+		const assets: Record<string, Asset> = {};
+		for (const id of Object.keys(this.doc.assets)) {
+			const a = this.doc.assets[id];
+			// Shallow copy: scalars by value, `source` deliberately by reference.
+			assets[id] = { id: a.id, name: a.name, kind: a.kind, format: a.format, source: a.source, thumbnail: a.thumbnail };
+		}
+		return {
+			json: JSON.stringify({
+				version: this.doc.version,
+				nodes: this.doc.nodes,
+				materials: this.doc.materials,
+				nextId: this.doc.nextId,
+				selectedIds: this.selectedIds
+			}),
+			assets
+		};
 	}
-	#restore(s: string) {
-		const parsed = JSON.parse(s);
-		this.doc = parsed.doc;
+
+	#restore(s: Snapshot) {
+		const parsed = JSON.parse(s.json);
+		this.doc = {
+			version: parsed.version,
+			nodes: parsed.nodes,
+			materials: parsed.materials,
+			nextId: parsed.nextId,
+			assets: { ...s.assets }
+		};
 		this.selectedIds = parsed.selectedIds.filter((id: string) =>
-			parsed.doc.nodes.some((n: SceneNode) => n.id === id)
+			parsed.nodes.some((n: SceneNode) => n.id === id)
 		);
 	}
 
@@ -204,8 +248,24 @@ class DocumentStore {
 	 * offset, by the source's own width so it lands beside rather than inside —
 	 * and the top-level clone is inserted directly below its original. See
 	 * `duplicateNames` for how the original and the copy get named.
+	 *
+	 * The two modes are deliberately absolute, with nothing shared halfway:
+	 *
+	 *  - **Copy** (`linked: false`) is a fully independent object. Geometry,
+	 *    material and mesh data are all cloned, so nothing you do to either
+	 *    copy can ever reach the other.
+	 *  - **Link** (`linked: true`) shares *everything that describes the
+	 *    object* — its shape and its paint — with every other member of the
+	 *    same link group. Only the transform (position, rotation, scale) is
+	 *    per-copy, because otherwise the copies would sit on top of each other
+	 *    and there'd be no point to them.
+	 *
+	 * Link membership is symmetric: there is no "original". Editing any member
+	 * updates the whole group, which is why breaking a link (see
+	 * `DocumentStore.unlink`) has to be an explicit act rather than something
+	 * an edit does behind your back.
 	 */
-	duplicate(id: string, widthOf: (id: string) => number, snap = 0): string | null {
+	duplicate(id: string, widthOf: (id: string) => number, snap = 0, linked = false): string | null {
 		const src = this.node(id);
 		if (!src) return null;
 		const isTaken = (name: string) => this.doc.nodes.some((n) => n.id !== id && n.name === name);
@@ -217,6 +277,28 @@ class DocumentStore {
 			clone.id = this.newId();
 			clone.parentId = parentId;
 			clone.name = srcId === id ? copyName : `${s.name} copy`;
+			if (linked) {
+				// Join (or open) the source's link group. `clone` is a structural
+				// copy of `s`, so it already points at the same materialId and
+				// the same mesh/model assetId — which is exactly what shared
+				// paint and shared shape mean. Nothing to clone, nothing to
+				// re-point: leaving those references alone *is* the link.
+				if (!s.dataLink) s.dataLink = this.newId('link');
+				clone.dataLink = s.dataLink;
+			} else {
+				// A plain copy owes nothing to its source. Everything the node
+				// points at gets its own instance, so the two can diverge
+				// completely from this moment on.
+				clone.dataLink = null;
+				if (isAuthoredMesh(clone) && isAuthoredMesh(s)) {
+					clone.assetId = this.cloneMeshAsset(s.assetId) ?? clone.assetId;
+				}
+				if (isPrimitive(clone) || isAuthoredMesh(clone)) {
+					clone.materialId = this.#cloneMaterial(clone.materialId);
+				} else if (isImported(clone) && clone.materialOverride) {
+					clone.materialOverride = this.#cloneMaterial(clone.materialOverride);
+				}
+			}
 			if (parentId === s.parentId) {
 				const w = Math.max(0.5, widthOf(srcId));
 				const step = snap > 0 ? Math.max(snap, Math.round(w / snap) * snap) : w;
@@ -231,6 +313,74 @@ class DocumentStore {
 		return cloneInto(id, src.parentId, true);
 	}
 
+	/** Every node in `link`, in document order. A group of one is a leftover
+	 *  and gets cleaned up by `tidyLinks()`. */
+	linkGroup(link: string | null): SceneNode[] {
+		if (!link) return [];
+		return this.doc.nodes.filter((n) => n.dataLink === link);
+	}
+
+	/** How many *other* nodes an edit to this one would also change. */
+	linkedSiblingCount(node: SceneNode): number {
+		if (!node.dataLink) return 0;
+		return Math.max(0, this.linkGroup(node.dataLink).length - 1);
+	}
+
+	/**
+	 * Take one node out of its link group, handing it private copies of
+	 * everything the group was sharing so it keeps exactly the look it has
+	 * right now and simply stops following the others.
+	 */
+	unlink(node: SceneNode): number {
+		const link = node.dataLink;
+		if (!link) return 0;
+		const others = this.linkGroup(link).filter((n) => n.id !== node.id).length;
+		if (isAuthoredMesh(node)) {
+			node.assetId = this.cloneMeshAsset(node.assetId) ?? node.assetId;
+		}
+		if (isPrimitive(node) || isAuthoredMesh(node)) {
+			node.materialId = this.#cloneMaterial(node.materialId);
+		} else if (isImported(node) && node.materialOverride) {
+			node.materialOverride = this.#cloneMaterial(node.materialOverride);
+		}
+		node.dataLink = null;
+		this.tidyLinks();
+		return others;
+	}
+
+	/** A link group with only one member left says "linked" in the UI and
+	 *  propagates to nobody, which is just a lie. Drop those. */
+	tidyLinks() {
+		const counts = new Map<string, number>();
+		for (const n of this.doc.nodes) {
+			if (n.dataLink) counts.set(n.dataLink, (counts.get(n.dataLink) ?? 0) + 1);
+		}
+		for (const n of this.doc.nodes) {
+			if (n.dataLink && (counts.get(n.dataLink) ?? 0) < 2) n.dataLink = null;
+		}
+	}
+
+	/** Deep-copy a mesh asset (geometry payload included) and return the new
+	 *  id, or null when there was nothing to copy. */
+	cloneMeshAsset(id: string): string | null {
+		const src = this.doc.assets[id];
+		if (!src) return null;
+		const nid = this.newId('mesh');
+		const copy = structuredClone($state.snapshot(src)) as Asset;
+		copy.id = nid;
+		this.doc.assets[nid] = copy;
+		return nid;
+	}
+
+	#cloneMaterial(id: string): string {
+		const src = this.doc.materials[id];
+		const nid = this.newId('m');
+		this.doc.materials[nid] = src
+			? (structuredClone($state.snapshot(src)) as MaterialSpec)
+			: defaultMaterial();
+		return nid;
+	}
+
 	remove(ids: string[]) {
 		const doomed = new Set<string>();
 		for (const id of ids) {
@@ -238,6 +388,8 @@ class DocumentStore {
 			for (const d of this.descendants(id)) doomed.add(d.id);
 		}
 		this.doc.nodes = this.doc.nodes.filter((n) => !doomed.has(n.id));
+		// Deleting copies can leave a link group with a single member.
+		this.tidyLinks();
 		this.selectedIds = this.selectedIds.filter((id) => !doomed.has(id));
 	}
 
@@ -272,6 +424,16 @@ class DocumentStore {
 			}
 			return true;
 		});
+	}
+
+	/** True when this node, or any ancestor, is locked. */
+	isLocked(id: string): boolean {
+		let cur = this.node(id);
+		while (cur) {
+			if (cur.locked) return true;
+			cur = cur.parentId ? this.node(cur.parentId) : undefined;
+		}
+		return false;
 	}
 
 	/** Reparent while preserving world position. `toLocal` is supplied by the

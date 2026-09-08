@@ -30,6 +30,10 @@ const engine = {
 		}
 		return this.renderer;
 	},
+	// How many deferred stages are allowed to fetch+build at once. The marquee has
+	// ten cards; letting them all start the moment the slide scrolls into view
+	// just moves the original stall rather than removing it.
+	loading: 0,
 	add(s) {
 		this.stages.add(s);
 		if (!this.running) {
@@ -45,9 +49,40 @@ const engine = {
 		const dt = Math.min((t - e.last) / 1000 || 0, 0.1);
 		e.last = t;
 		e.frameNo = (e.frameNo || 0) + 1;
-		if (e.frameNo % 8 === 1) e.stages.forEach((s) => s.checkVisible());
+		if (e.frameNo % 8 === 1) {
+			e.stages.forEach((s) => {
+				s.checkVisible();
+				if (s.visible) s.wake();
+			});
+		}
 		const list = [...e.stages].filter((s) => s.visible && s.model);
-		list.sort((a, b) => a.sizeKey.localeCompare(b.sizeKey));
+		if (!list.length) {
+			requestAnimationFrame(e.tick);
+			return;
+		}
+
+		// One drawing buffer, sized to the largest visible stage and reused by all
+		// of them through the GL viewport. Previously each stage set the renderer
+		// to its own size, and since the hero and the marquee cards are different
+		// sizes that reallocated the buffer at least twice every frame — more
+		// expensive than the draws it was serving. Sizes only change now when a
+		// different-sized stage scrolls in or out.
+		let maxW = 0;
+		let maxH = 0;
+		for (const s of list) {
+			if (s.pxW > maxW) maxW = s.pxW;
+			if (s.pxH > maxH) maxH = s.pxH;
+		}
+		if (!maxW || !maxH) {
+			requestAnimationFrame(e.tick);
+			return;
+		}
+		const key = maxW + 'x' + maxH;
+		if (key !== e.sizeKey) {
+			e.gl.setSize(maxW, maxH, false);
+			e.sizeKey = key;
+		}
+
 		for (let i = 0; i < list.length; i++) {
 			const s = list[i];
 			s.step(dt);
@@ -56,13 +91,15 @@ const engine = {
 			if (!s.hasAttribute('priority') && (e.frameNo + i) % 2 === 0) continue;
 			const w = s.pxW, h = s.pxH;
 			if (!w || !h) continue;
-			const key = w + 'x' + h;
-			if (key !== e.sizeKey) {
-				e.gl.setSize(w, h, false);
-				e.sizeKey = key;
-			}
+			// Draw into the bottom-left corner of the shared buffer and scissor the
+			// clear to it, so one stage never wipes or bleeds into another's pixels.
+			e.gl.setViewport(0, 0, w, h);
+			e.gl.setScissor(0, 0, w, h);
+			e.gl.setScissorTest(true);
 			e.gl.render(s.scene, s.camera);
-			s.blit(e.gl.domElement);
+			// GL's origin is bottom-left, canvas 2D's is top-left, so that corner
+			// sits at y = maxH - h in the source image.
+			s.blit(e.gl.domElement, maxH - h, w, h);
 		}
 		requestAnimationFrame(e.tick);
 	}
@@ -133,13 +170,37 @@ class PropsizeStage extends HTMLElement {
 		const cycle = (this.getAttribute('cycle') || '').split(',').map((s) => s.trim()).filter(Boolean);
 		this.queue = cycle.length ? cycle : [this.getAttribute('model')].filter(Boolean);
 		this.qi = 0;
+		// Only stages that are actually on screen at load — the hero, marked
+		// `priority` — fetch and build now. The ten marquee cards live a full
+		// viewport further down, and building them all here meant every visit to
+		// /propsize pulled ~400KB of model JSON and built ~700 meshes before the
+		// first slide could settle. They wake in wake(), once scrolled to.
 		if (this.queue.length) {
-			this.show(this.queue[0]);
-			if (this.queue.length > 1) {
-				const every = Number(this.getAttribute('cycle-ms') ?? 6500);
-				this._timer = setInterval(() => this.next(), every);
-			}
+			if (this.hasAttribute('priority')) this.start();
+			else this._deferred = true;
 		}
+	}
+
+	// Kick off the first model plus the cycle timer, if this stage has one.
+	start() {
+		const p = this.show(this.queue[0]);
+		if (this.queue.length > 1 && !this._timer) {
+			const every = Number(this.getAttribute('cycle-ms') ?? 6500);
+			this._timer = setInterval(() => this.next(), every);
+		}
+		return p;
+	}
+
+	// Called by the engine every 8th frame for stages that are on screen. Loads
+	// are capped so scrolling to the marquee starts a couple of models rather
+	// than ten at once; the rest are picked up on later passes.
+	wake() {
+		if (!this._deferred || engine.loading >= 2) return;
+		this._deferred = false;
+		engine.loading++;
+		Promise.resolve(this.start()).finally(() => {
+			engine.loading--;
+		});
 	}
 
 	disconnectedCallback() {
@@ -223,9 +284,11 @@ class PropsizeStage extends HTMLElement {
 		this.camera.lookAt(0, 0, 0);
 	}
 
-	blit(src) {
+	// `sy` is where this stage's slice starts in the shared buffer (GL renders it
+	// into the bottom-left corner); w/h are its own device-pixel dimensions.
+	blit(src, sy, w, h) {
 		this.ctx.clearRect(0, 0, this.pxW, this.pxH);
-		this.ctx.drawImage(src, 0, 0, this.pxW, this.pxH);
+		this.ctx.drawImage(src, 0, sy, w, h, 0, 0, w, h);
 	}
 
 	enableOrbit() {

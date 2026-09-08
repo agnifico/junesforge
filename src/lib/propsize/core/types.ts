@@ -14,7 +14,7 @@ export type Vec3 = { x: number; y: number; z: number };
 export type PrimitiveType =
 	| 'box' | 'sphere' | 'cylinder' | 'cone' | 'torus' | 'torusKnot'
 	| 'tetra' | 'octa' | 'icosa' | 'dodeca' | 'plane'
-	| 'circle' | 'ring' | 'capsule' | 'lathe';
+	| 'circle' | 'ring' | 'capsule' | 'lathe' | 'extrude';
 
 export type Vec2 = { x: number; y: number };
 
@@ -85,6 +85,11 @@ type NodeBase = {
 	visible: boolean;
 	locked: boolean;
 	transform: { position: Vec3; rotation: Vec3; scale: Vec3 };
+	/**
+	 * Shared data with other nodes of the same link. Transform stays per-object.
+	 * Shape / mesh asset edits on any member update the rest. Null = independent.
+	 */
+	dataLink: string | null;
 };
 
 export type PrimitiveNode = NodeBase & {
@@ -98,6 +103,20 @@ export type PrimitiveNode = NodeBase & {
 };
 
 export type GroupNode = NodeBase & { kind: 'group' };
+
+/**
+ * A baked, authored mesh. Geometry lives in an asset (same rule as imports);
+ * the node keeps transform + a shared materialId. Convert-from-primitive
+ * writes one of these; isolation Model/Paint will edit that asset.
+ */
+export type MeshNode = NodeBase & {
+	kind: 'mesh';
+	assetId: string;
+	materialId: string;
+	castShadow: boolean;
+	receiveShadow: boolean;
+	stats: { vertices: number; triangles: number };
+};
 
 /**
  * An imported OBJ/GLB. Its geometry and materials come from the file, so it has
@@ -124,7 +143,7 @@ export type ImportedNode = NodeBase & {
 	part: { index: number; name: string; center: Vec3 } | null;
 };
 
-export type SceneNode = PrimitiveNode | GroupNode | ImportedNode;
+export type SceneNode = PrimitiveNode | GroupNode | ImportedNode | MeshNode;
 
 /**
  * Where an asset's bytes come from.
@@ -142,8 +161,8 @@ export type AssetSource =
 export type Asset = {
 	id: string;
 	name: string;
-	kind: 'model' | 'texture';
-	format: 'glb' | 'gltf' | 'obj' | 'png' | 'jpg' | 'webp';
+	kind: 'model' | 'texture' | 'mesh';
+	format: 'glb' | 'gltf' | 'obj' | 'fbx' | 'stl' | 'ply' | 'png' | 'jpg' | 'webp' | 'meshjson';
 	source: AssetSource;
 	/** Data URL of a small render, cached in IndexedDB, not in the document. */
 	thumbnail?: string;
@@ -161,9 +180,12 @@ export type PropsizeDoc = {
 export const isPrimitive = (n: SceneNode): n is PrimitiveNode => n.kind === 'primitive';
 export const isGroup = (n: SceneNode): n is GroupNode => n.kind === 'group';
 export const isImported = (n: SceneNode): n is ImportedNode => n.kind === 'imported';
+export const isAuthoredMesh = (n: SceneNode): n is MeshNode => n.kind === 'mesh';
 
-/** Nodes that own a mesh — everything except groups. */
-export const isMeshNode = (n: SceneNode): n is PrimitiveNode | ImportedNode => n.kind !== 'group';
+/** Nodes that own drawable geometry — everything except groups. */
+export const isMeshNode = (
+	n: SceneNode
+): n is PrimitiveNode | ImportedNode | MeshNode => n.kind !== 'group';
 
 export function emptyDoc(): PropsizeDoc {
 	return { version: 2, nodes: [], materials: {}, assets: {}, nextId: 1 };

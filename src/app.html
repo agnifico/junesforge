@@ -12,10 +12,14 @@
 	<!-- <link rel="stylesheet" href="./main.css" /> -->
 
 
+	<!-- Site-wide fonts. This is render-blocking on every route, so it carries only
+	     families actually referenced in src/: DM Serif Text, Doto, Jersey 25, Arvo
+	     and Forum were dropped (no usages anywhere). Routes that need something
+	     else load it in their own <svelte:head> — see /propsize and /propsize/app. -->
 	<link rel="preconnect" href="https://fonts.googleapis.com" />
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 	<link
-		href="https://fonts.googleapis.com/css2?family=DM+Serif+Text:ital@0;1&family=Doto:wght@100..900&family=Fira+Code:wght@300..700&family=Jersey+25&family=Raleway:ital,wght@0,100..900;1,100..900&family=Silkscreen:wght@400;700&family=Ubuntu+Mono:ital,wght@0,400;0,700;1,400;1,700&family=Arvo:ital,wght@0,400;0,700;1,400;1,700&family=Forum&display=swap&display=swap"
+		href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300..700&family=Raleway:ital,wght@0,100..900;1,100..900&family=Silkscreen:wght@400;700&family=Ubuntu+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap"
 		rel="stylesheet" />
 	%sveltekit.head%
 	<title>junesforge // design studio</title>

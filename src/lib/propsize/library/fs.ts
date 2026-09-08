@@ -17,6 +17,8 @@
  *    gallery works for that session but doesn't persist.
  */
 
+import { SUPPORTED_MODEL_EXTENSIONS } from '../import/loaders';
+
 export type LibraryEntry = {
 	/** Path relative to the library root, e.g. "props/barrels/barrel_a.glb" */
 	path: string;
@@ -28,7 +30,7 @@ export type LibraryEntry = {
 	file?: File;
 };
 
-const MODEL_FORMATS = ['glb', 'gltf', 'obj', 'fbx', 'stl'];
+const MODEL_FORMATS: string[] = [...SUPPORTED_MODEL_EXTENSIONS];
 const DB_NAME = 'propsize';
 const STORE = 'handles';
 const KEY = 'libraryRoot';

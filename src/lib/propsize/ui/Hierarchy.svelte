@@ -171,6 +171,7 @@
 	function iconFor(node: SceneNode): string {
 		if (isGroup(node)) return ICONS.group;
 		if (isPrimitive(node)) return GEO_DEFS[node.type].icon;
+		if (node.kind === 'mesh') return ICONS.mesh;
 		return ICONS.imported;
 	}
 
@@ -197,6 +198,11 @@
 	function toggleVisible(node: SceneNode) {
 		docStore.mark(null);
 		node.visible = !node.visible;
+		engine.requestSync();
+	}
+	function toggleLock(node: SceneNode) {
+		docStore.mark(null);
+		node.locked = !node.locked;
 		engine.requestSync();
 	}
 
@@ -240,35 +246,16 @@
 
 	// Recomputed as the document changes, so the tooltip always states the real
 	// number the button is about to act on.
-	let sharedMats = $derived(engine.sharedMaterialCount());
-	let unshareTitle = $derived(
-		sharedMats > 0
-			? `Give every object its own material.\n\n${sharedMats} object${sharedMats === 1 ? '' : 's'} currently ` +
-					`share a material with another object, so recolouring one repaints them all — common in models ` +
-					`imported from a single file. This hands each part its own copy, making it paintable on its own.\n\n` +
-					`Objects that already had a material to themselves are left alone. Undoable with Ctrl/Cmd+Z.`
-			: 'Every object already has its own material — nothing to unshare.'
-	);
-
-	function unshareMats() {
-		const n = engine.unshareAllMaterials();
-		editorStore.toast(
-			n
-				? `${n} object${n === 1 ? '' : 's'} given their own material`
-				: 'Every object already has its own material'
-		);
-	}
-
 	// Copy needs exactly one shape to read from; paste needs something on the
 	// clipboard and at least one shape to put it on. Both buttons say so by
 	// being disabled rather than by toasting after the fact.
 	let copySource = $derived.by(() => {
 		if (docStore.selectedIds.length !== 1) return null;
 		const n = docStore.node(docStore.selectedIds[0]);
-		return n && isPrimitive(n) ? n : null;
+		return n && (isPrimitive(n) || n.kind === 'mesh') ? n : null;
 	});
 	let pasteTargets = $derived(
-		editorStore.materialClipboard ? docStore.selectionMeshes(true).filter(isPrimitive).length : 0
+		editorStore.materialClipboard ? docStore.selectionMeshes(true).filter((n) => isPrimitive(n) || n.kind === 'mesh').length : 0
 	);
 
 	function copyMat() {
@@ -385,23 +372,9 @@
 	<button class="btn icon-only" title="Ungroup" onclick={() => engine.ungroupSelection()}
 		>{@html TOOLBAR_ICONS.ungroupBtn}</button
 	>
-	<button
-		class="btn icon-only"
-		title="Duplicate (Ctrl/Cmd+D)"
-		onclick={() => engine.duplicateSelection()}>{@html TOOLBAR_ICONS.dupBtn}</button
-	>
 	<button class="btn icon-only danger" title="Delete (Del)" onclick={() => engine.deleteSelection()}
 		>{@html TOOLBAR_ICONS.delBtn}</button
 	>
-</div>
-<div class="act-bar">
-	<button
-		class="btn sm"
-		title="Sit the selection on the grid"
-		onclick={() => engine.dropToGround()}
-	>
-		Drop to ground
-	</button>
 </div>
 <div class="act-bar">
 	<div class="act-group">
@@ -431,9 +404,25 @@
 	</div>
 </div>
 <div class="act-bar">
-	<button class="btn sm" title={unshareTitle} disabled={sharedMats === 0} onclick={unshareMats}>
-		Unshare materials{sharedMats > 0 ? ` (${sharedMats})` : ''}
-	</button>
+	<div class="act-group">
+		<span class="act-group-label">Duplicate</span>
+		<button
+			class="btn sm"
+			disabled={!docStore.selectedIds.length}
+			title="Copy (Ctrl/Cmd+D) — an exact but fully independent object. Nothing you do to it can reach the original."
+			onclick={() => engine.duplicateSelection()}
+		>
+			Copy
+		</button>
+		<button
+			class="btn sm"
+			disabled={!docStore.selectedIds.length}
+			title="Link (Alt+D) — shares shape and colour with the original. Editing either updates both; only position, rotation and scale are per-copy."
+			onclick={() => engine.duplicateSelection(true)}
+		>
+			Link
+		</button>
+	</div>
 </div>
 
 <div
@@ -481,6 +470,7 @@
 					class:ancestor={ancestorIds.has(row.node.id) &&
 						!docStore.selectedIds.includes(row.node.id)}
 					class:hidden={!row.node.visible}
+					class:locked={row.node.locked}
 					class:drop-into={dropTargetId === row.node.id && dropMode === 'into'}
 					class:drop-before={dropTargetId === row.node.id && dropMode === 'before'}
 					class:drop-after={dropTargetId === row.node.id && dropMode === 'after'}
@@ -532,6 +522,19 @@
 							}}>{row.node.name}</span
 						>
 					{/if}
+					{#if row.node.dataLink}
+						<span class="link-mark" title="Linked copy — shares shape and colour with its group">{@html TOOLBAR_ICONS.linkBtn}</span>
+					{/if}
+					<span
+						class="lock"
+						title={row.node.locked ? 'Unlock' : 'Lock'}
+						onclick={(e) => {
+							e.stopPropagation();
+							toggleLock(row.node);
+						}}
+					>
+						{@html row.node.locked ? TOOLBAR_ICONS.lock : TOOLBAR_ICONS.unlock}
+					</span>
 					<span
 						class="eye"
 						onclick={(e) => {

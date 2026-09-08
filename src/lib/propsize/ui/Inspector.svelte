@@ -3,10 +3,11 @@
 	import { editorStore } from '$lib/propsize/core/editor.svelte';
 	import { GEO_DEFS } from '$lib/propsize/core/geometry';
 	import { defaultMaterial, shadeColor } from '$lib/propsize/core/materials';
-	import { isGroup, isPrimitive, isImported, isProfile } from '$lib/propsize/core/types';
+	import { isGroup, isPrimitive, isImported, isAuthoredMesh, isMeshNode, isProfile } from '$lib/propsize/core/types';
 	import ProfileEditor from './ProfileEditor.svelte';
-	import type { SceneNode, PrimitiveNode, ImportedNode, MaterialSpec, PrimitiveType } from '$lib/propsize/core/types';
+	import type { SceneNode, PrimitiveNode, ImportedNode, MeshNode, MaterialSpec, PrimitiveType } from '$lib/propsize/core/types';
 	import { round3, MIXED, commonValue, avgValue } from '$lib/propsize/core/utils';
+	import type { Axis } from '$lib/propsize/core/editor.svelte';
 	import type { SceneEngine } from '$lib/propsize/core/scene-engine.svelte';
 	import FieldSlider from './fields/FieldSlider.svelte';
 	import FieldToggle from './fields/FieldToggle.svelte';
@@ -18,6 +19,8 @@
 	import Swatches from './fields/Swatches.svelte';
 
 	let { engine }: { engine: SceneEngine } = $props();
+	let insetAmt = $state(0.2);
+	let bevelAmt = $state(0.15);
 
 	let selected = $derived(
 		docStore.selectedIds.map((id) => docStore.node(id)).filter((n): n is SceneNode => !!n)
@@ -27,7 +30,7 @@
 	// Self-heals a dangling materialId rather than handing the fields an
 	// undefined spec (which throws during render). Loads are normalized, so this
 	// only fires for documents patched in from elsewhere.
-	function material(node: PrimitiveNode): MaterialSpec {
+	function material(node: PrimitiveNode | MeshNode): MaterialSpec {
 		const existing = docStore.doc.materials[node.materialId];
 		if (existing) return existing;
 		const fresh = defaultMaterial();
@@ -51,32 +54,91 @@
 		node.transform.rotation[axis] = v;
 		engine.requestSync();
 	}
-	function setScale(node: SceneNode, axis: 'x' | 'y' | 'z', v: number) {
+	function setScale(node: SceneNode, axis: Axis, v: number) {
 		docStore.mark('scale:' + axis);
-		node.transform.scale[axis] = v;
+		applyLinkedScale(node, axis, v);
 		engine.requestSync();
+	}
+	function applyLinkedScale(node: SceneNode, axis: Axis, v: number) {
+		const prev = node.transform.scale[axis];
+		const axes = editorStore.linkedScaleAxes(axis);
+		const factor = prev === 0 ? null : v / prev;
+		for (const a of axes) {
+			node.transform.scale[a] = round3(factor === null ? v : node.transform.scale[a] * factor);
+		}
+	}
+	function materialShared(node: SceneNode) {
+		if (!isPrimitive(node) && !isAuthoredMesh(node)) return false;
+		return engine.materialUserCount(node.materialId) > 1;
 	}
 	function setGeometry(node: PrimitiveNode, key: string, v: number | boolean) {
 		docStore.mark('geo:' + key);
 		node.geometry[key] = v;
+		engine.syncLinked(node);
 		engine.requestSync();
 	}
 	// Spec-based rather than node-based, so the same editor drives a primitive's
-	// own material and an imported model's override material.
+	// own material and an imported model's override material. Linked copies
+	// share the spec itself, so a paint edit reaches them with nothing to
+	// propagate — but the person doing it still deserves to be told.
 	function setMaterial(m: MaterialSpec, key: string, mutate: (m: MaterialSpec) => void) {
 		docStore.mark('mat:' + key);
 		if (m) mutate(m);
+		noticePaintReach();
 		engine.requestSync();
 	}
 	function setTexture(m: MaterialSpec, key: string, mutate: (t: MaterialSpec['texture']) => void) {
 		docStore.mark('tex:' + key);
 		if (m) mutate(m.texture);
+		noticePaintReach();
 		engine.requestSync();
 	}
-	function setShadow(node: PrimitiveNode | ImportedNode, key: 'castShadow' | 'receiveShadow', v: boolean) {
+	function noticePaintReach() {
+		if (single) engine.noticeLinkedEdit(docStore.linkedSiblingCount(single));
+	}
+	function setShadow(node: PrimitiveNode | ImportedNode | MeshNode, key: 'castShadow' | 'receiveShadow', v: boolean) {
 		docStore.mark(key + ':' + node.id);
 		node[key] = v;
 		engine.requestSync();
+	}
+	function assignImageTexture(...targets: MaterialSpec[]) {
+		const mats = targets.filter(Boolean);
+		if (!mats.length) return;
+		const input = document.createElement('input');
+		input.type = 'file';
+		input.accept = 'image/png,image/jpeg,image/webp';
+		input.addEventListener('change', () => {
+			const file = input.files?.[0];
+			if (!file) return;
+			const reader = new FileReader();
+			reader.onload = () => {
+				const dataUrl = String(reader.result);
+				const ext = (file.name.split('.').pop() ?? 'png').toLowerCase();
+				const format = ext === 'jpg' || ext === 'jpeg' ? 'jpg' : ext === 'webp' ? 'webp' : 'png';
+				docStore.mark(null);
+				const id = docStore.newId('tex');
+				docStore.doc.assets[id] = {
+					id,
+					name: file.name,
+					kind: 'texture',
+					format,
+					source: { type: 'embedded', dataUrl }
+				};
+				for (const m of mats) {
+					m.texture.type = 'image';
+					m.texture.assetId = id;
+				}
+				engine.requestSync();
+			};
+			reader.readAsDataURL(file);
+		}, { once: true });
+		input.click();
+	}
+	function clearImageTexture(m: MaterialSpec) {
+		setTexture(m, 'type', (t) => {
+			t.type = 'none';
+			t.assetId = null;
+		});
 	}
 	function scaleAll(list: SceneNode[], factor: number) {
 		if (!list.length) return;
@@ -110,6 +172,8 @@
 			label="Scale"
 			triple={node.transform.scale}
 			step={0.1}
+			locks={editorStore.scaleLink}
+			onLockToggle={(axis) => editorStore.toggleScaleLink(axis)}
 			onchange={(axis, v) => setScale(node, axis, v)}
 		/>
 		<BtnRow
@@ -127,6 +191,23 @@
 				{ label: 'Reset scale', onClick: () => engine.resetTransform('scale') }
 			]}
 		/>
+		<FieldToggle
+			label="Lock"
+			value={node.locked}
+			onchange={(v) => {
+				docStore.mark('lock:' + node.id);
+				node.locked = v;
+				engine.requestSync();
+			}}
+		/>
+		{#if node.dataLink}
+			{@const others = docStore.linkedSiblingCount(node)}
+			<p class="link-note">
+				<b>Linked copy</b> — shape and colour are shared with {others}
+				{others === 1 ? 'other' : 'others'}. Editing any of them edits all of them. Position, rotation and
+				scale below are this copy alone.
+			</p>
+		{/if}
 	</div>
 {/snippet}
 
@@ -136,9 +217,11 @@
 		{#if isProfile(p)}
 			<ProfileEditor
 				profile={p}
+				kind={GEO_DEFS[node.type].profileKind ?? 'lathe'}
 				onchange={(next, key) => {
 					docStore.mark(key);
 					node.geometry.profile = next;
+					engine.syncLinked(node);
 					engine.requestSync();
 				}}
 			/>
@@ -173,37 +256,55 @@
 	{@const tex = m.texture}
 	<div class="section">
 		<div class="section-title">Texture</div>
-		<FieldSelect
-			label="Pattern"
-			value={tex.type}
-			options={[
-				{ value: 'none', label: 'None' },
-				{ value: 'checker', label: 'Checker' },
-				{ value: 'stripes', label: 'Stripes' },
-				{ value: 'speckle', label: 'Speckle' }
+		<BtnRow
+			label="Image map"
+			buttons={[
+				{
+					label: tex.type === 'image' && tex.assetId ? 'Replace' : 'Choose',
+					onClick: () => assignImageTexture(m)
+				},
+				...(tex.type === 'image'
+					? [{ label: 'Clear', onClick: () => clearImageTexture(m) }]
+					: [])
 			]}
-			onchange={(v) => setTexture(m, 'type', (t) => (t.type = v as MaterialSpec['texture']['type']))}
 		/>
-		{#if tex.type === 'checker' || tex.type === 'stripes' || tex.type === 'speckle'}
-			<FieldColor
-				label="Color A"
-				value={tex.colorA || m.color}
-				onchange={(v) => setTexture(m, 'colorA', (t) => (t.colorA = v))}
+		{#if tex.type === 'image'}
+			<div class="batch-note">
+				{docStore.doc.assets[tex.assetId ?? '']?.name ?? 'Embedded image'}
+			</div>
+		{:else}
+			<FieldSelect
+				label="Pattern"
+				value={tex.type}
+				options={[
+					{ value: 'none', label: 'None' },
+					{ value: 'checker', label: 'Checker' },
+					{ value: 'stripes', label: 'Stripes' },
+					{ value: 'speckle', label: 'Speckle' }
+				]}
+				onchange={(v) => setTexture(m, 'type', (t) => (t.type = v as MaterialSpec['texture']['type']))}
 			/>
-			<FieldColor
-				label="Color B"
-				value={tex.colorB || shadeColor(m.color, -0.22)}
-				onchange={(v) => setTexture(m, 'colorB', (t) => (t.colorB = v))}
-			/>
-			<FieldSlider
-				label={tex.type === 'speckle' ? 'Density' : 'Tiles'}
-				value={tex.tiles}
-				min={2}
-				max={24}
-				step={1}
-				int
-				oninput={(v) => setTexture(m, 'tiles', (t) => (t.tiles = v))}
-			/>
+			{#if tex.type === 'checker' || tex.type === 'stripes' || tex.type === 'speckle'}
+				<FieldColor
+					label="Color A"
+					value={tex.colorA || m.color}
+					onchange={(v) => setTexture(m, 'colorA', (t) => (t.colorA = v))}
+				/>
+				<FieldColor
+					label="Color B"
+					value={tex.colorB || shadeColor(m.color, -0.22)}
+					onchange={(v) => setTexture(m, 'colorB', (t) => (t.colorB = v))}
+				/>
+				<FieldSlider
+					label={tex.type === 'speckle' ? 'Density' : 'Tiles'}
+					value={tex.tiles}
+					min={2}
+					max={24}
+					step={1}
+					int
+					oninput={(v) => setTexture(m, 'tiles', (t) => (t.tiles = v))}
+				/>
+			{/if}
 		{/if}
 		{#if tex.type !== 'none'}
 			<FieldSlider
@@ -299,7 +400,7 @@
 	{@render textureSection(m)}
 {/snippet}
 
-{#snippet shadowSection(node: PrimitiveNode | ImportedNode)}
+{#snippet shadowSection(node: PrimitiveNode | ImportedNode | MeshNode)}
 	<div class="section">
 		<div class="section-title">Shadows</div>
 		<FieldToggle label="Cast shadow" value={node.castShadow} onchange={(v) => setShadow(node, 'castShadow', v)} />
@@ -360,59 +461,223 @@
 	</div>
 {/snippet}
 
+{#snippet meshInfoSection(node: MeshNode)}
+	<div class="section">
+		<div class="section-title">Mesh</div>
+		<div class="batch-note">
+			{engine.modelVertCount || node.stats.vertices} vertices, {node.stats.triangles} triangles
+			{#if engine.modelFaceCount} · {engine.modelFaceCount} faces{/if}. Size sliders are gone; undo restores a
+			parametric primitive.
+		</div>
+	</div>
+{/snippet}
+
+{#snippet isolationShell(node: SceneNode)}
+	<div class="section">
+		<div class="section-title">{editorStore.isolationTool === 'paint' ? 'Paint' : 'Model'}</div>
+		{#if editorStore.isolationTool === 'paint'}
+			<div class="batch-note">
+				Paint-on-mesh (fill, wear, pixel size) lands in the next paint pass. The surface colour below still
+				works.
+			</div>
+		{:else if isAuthoredMesh(node)}
+			<FieldSegmented
+				label="Select"
+				value={editorStore.editSelectMode}
+				options={[
+					{ value: 'vertex', label: 'Vertex', title: '1' },
+					{ value: 'edge', label: 'Edge', title: '2' },
+					{ value: 'face', label: 'Face', title: '3' }
+				]}
+				onchange={(v) => engine.setEditSelectMode(v as 'vertex' | 'edge' | 'face')}
+			/>
+			<div class="batch-note">
+				{engine.modelSelCount} selected · click to pick, Shift-click to add, Shift-drag to box-select, drag
+				to move. Esc clears the selection, then leaves isolation.
+			</div>
+			<BtnRow
+				label="Edit"
+				buttons={[
+					{ label: 'Move', title: 'G', onClick: () => engine.startModelGrab() },
+					{ label: 'Extrude', title: 'E — faces', onClick: () => engine.modelExtrude() },
+					{ label: 'Inset', title: 'I — faces', onClick: () => engine.modelInset(insetAmt) },
+					{ label: 'Loop cut', title: 'C — one edge', onClick: () => engine.modelLoopCut() }
+				]}
+			/>
+			<BtnRow
+				buttons={[
+					{ label: 'Bevel', title: 'B — edges', onClick: () => engine.modelBevel(bevelAmt) },
+					{ label: 'Merge', title: 'M — vertices', onClick: () => engine.modelMerge() },
+					{ label: 'Delete', title: 'X', onClick: () => engine.modelDelete() }
+				]}
+			/>
+			<FieldSlider
+				label="Inset"
+				value={insetAmt}
+				min={0.02}
+				max={0.45}
+				step={0.01}
+				oninput={(v) => (insetAmt = v)}
+			/>
+			<FieldSlider
+				label="Bevel"
+				value={bevelAmt}
+				min={0.02}
+				max={0.45}
+				step={0.01}
+				oninput={(v) => (bevelAmt = v)}
+			/>
+			<FieldToggle
+				label="Proportional"
+				value={editorStore.modelProportional}
+				onchange={(v) => (editorStore.modelProportional = v)}
+			/>
+			{#if editorStore.modelProportional}
+				<FieldSlider
+					label="Falloff radius"
+					value={editorStore.modelPropRadius}
+					min={0.1}
+					max={8}
+					step={0.1}
+					oninput={(v) => (editorStore.modelPropRadius = v)}
+				/>
+			{/if}
+		{:else}
+			<div class="batch-note">
+				Modelling needs an authored mesh. Convert a primitive to isolate it for vertex tools. Imports stay
+				view-only until a later convert pass.
+			</div>
+		{/if}
+	</div>
+{/snippet}
+
+<!--
+	A link shares shape *and* paint, so there is one thing to break, not two.
+	"Make unique" stays for the other, unrelated way objects end up sharing a
+	material — an imported file that points a dozen parts at one entry — which
+	has nothing to do with linked duplicates and shouldn't be worded as if it
+	did.
+-->
+{#snippet unlinkButtons(node: SceneNode)}
+	{@const linked = !!node.dataLink}
+	{@const shareMat = !linked && materialShared(node)}
+	{#if shareMat || linked}
+		<div class="insp-unlinks">
+			{#if linked}
+				{@const others = docStore.linkedSiblingCount(node)}
+				<button
+					type="button"
+					class="mini-btn warn"
+					title={`Give this copy its own shape and its own colour. The other ${others} ${others === 1 ? 'copy keeps' : 'copies keep'} following each other.`}
+					onclick={() => engine.unlinkNode(node)}
+				>
+					Unlink
+				</button>
+			{:else if isPrimitive(node) || isAuthoredMesh(node)}
+				<button
+					type="button"
+					class="mini-btn"
+					title="This object keeps its colour but stops sharing the material entry, so recolouring it no longer repaints the others."
+					onclick={() => engine.unlinkMaterial(node)}
+				>
+					Make unique
+				</button>
+			{/if}
+		</div>
+	{/if}
+{/snippet}
+
 {#snippet singleInspector(node: SceneNode)}
+	{@const isolated = editorStore.isolatedId === node.id}
 	<div class="insp-sticky">
 		<input
 			class="name-input"
 			value={node.name}
 			oninput={(e) => renameNode(node, (e.currentTarget as HTMLInputElement).value)}
 		/>
-		{#if !isGroup(node)}
+		{#if isolated}
 			<div class="itabs">
 				<div
 					class="itab"
-					class:active={editorStore.inspectorTab === 'shape'}
-					onclick={() => (editorStore.inspectorTab = 'shape')}
+					class:active={editorStore.isolationTool === 'model'}
+					onclick={() => (editorStore.isolationTool = 'model')}
 				>
-					Shape
+					Model
 				</div>
 				<div
 					class="itab"
-					class:active={editorStore.inspectorTab === 'surface'}
-					onclick={() => (editorStore.inspectorTab = 'surface')}
+					class:active={editorStore.isolationTool === 'paint'}
+					onclick={() => (editorStore.isolationTool = 'paint')}
 				>
-					Surface
+					Paint
 				</div>
+			</div>
+		{:else}
+			<div class="insp-tabs-row">
+				<div class="itabs">
+					<div
+						class="itab"
+						class:active={editorStore.inspectorTab === 'shape'}
+						onclick={() => (editorStore.inspectorTab = 'shape')}
+					>
+						Shape
+					</div>
+					<div
+						class="itab"
+						class:active={editorStore.inspectorTab === 'surface'}
+						onclick={() => (editorStore.inspectorTab = 'surface')}
+					>
+						Surface
+					</div>
+				</div>
+				{@render unlinkButtons(node)}
 			</div>
 		{/if}
 	</div>
 
-	{#if isGroup(node)}
+	{#if isolated}
+		{@render isolationShell(node)}
 		{@render transformSection(node)}
-		<div class="section">
-			<div class="section-title">Group</div>
-			<div class="batch-note">
-				{docStore.descendants(node.id).length} descendants. Select the children to batch-edit their material or
-				shape.
-			</div>
-		</div>
+		{#if isAuthoredMesh(node)}
+			{@render meshInfoSection(node)}
+			{#if editorStore.isolationTool === 'paint'}
+				{@render materialSection(material(node), 'Material')}
+				{@render shadowSection(node)}
+			{/if}
+		{:else if isImported(node)}
+			{@render importedInfoSection(node)}
+			{#if editorStore.isolationTool === 'paint'}
+				{@render importedMaterialSection(node)}
+				{@render shadowSection(node)}
+			{/if}
+		{:else if isPrimitive(node)}
+			{@render geometrySection(node)}
+		{/if}
+	{:else if isGroup(node)}
+		{@const paintable = docStore.descendants(node.id).filter(isMeshNode)}
+		{@const meshes = paintable.filter(isPrimitive)}
+		{#if editorStore.inspectorTab === 'shape'}
+			{@render transformSection(node)}
+			{@render batchGeometrySection(meshes)}
+		{:else}
+			{@render batchMaterialSection(meshes)}
+			{@render batchShadowSection(paintable)}
+			{@render importedOverrideSection(paintable)}
+		{/if}
 	{:else if isPrimitive(node)}
 		{#if editorStore.inspectorTab === 'shape'}
 			{@render transformSection(node)}
 			{@render geometrySection(node)}
 		{:else}
 			{@render materialSection(material(node), 'Material')}
-			<div class="section">
-				<BtnRow
-					buttons={[
-						{
-							label: 'Make unique',
-							title: 'Give this object its own copy of the material, breaking any sharing with duplicates',
-							onClick: () => engine.unlinkMaterial(node)
-						}
-					]}
-				/>
-			</div>
+			{@render shadowSection(node)}
+		{/if}
+	{:else if isAuthoredMesh(node)}
+		{#if editorStore.inspectorTab === 'shape'}
+			{@render transformSection(node)}
+			{@render meshInfoSection(node)}
+		{:else}
+			{@render materialSection(material(node), 'Material')}
 			{@render shadowSection(node)}
 		{/if}
 	{:else if isImported(node)}
@@ -434,7 +699,18 @@
 			{#each ['x', 'y', 'z'] as const as axis (axis)}
 				{@const cv = commonValue(roots, (n) => round3(n.transform[key][axis]))}
 				<div class="minifield">
-					<label for="bt-{key}-{axis}">{axis.toUpperCase()}</label>
+					<label for="bt-{key}-{axis}">
+						{axis.toUpperCase()}
+						{#if key === 'scale'}
+							<button
+								type="button"
+								class="axis-link"
+								class:on={editorStore.scaleLink[axis]}
+								title="Link this axis"
+								onclick={() => editorStore.toggleScaleLink(axis)}
+							></button>
+						{/if}
+					</label>
 					<input
 						id="bt-{key}-{axis}"
 						type="number"
@@ -449,7 +725,8 @@
 							if (isNaN(v)) return;
 							docStore.mark('bt:' + key + axis);
 							roots.forEach((n) => {
-								n.transform[key][axis] = v;
+								if (key === 'scale') applyLinkedScale(n, axis, v);
+								else n.transform[key][axis] = v;
 							});
 							engine.requestSync();
 						}}
@@ -572,7 +849,10 @@
 							mixed={cv === MIXED}
 							onchange={(v) => {
 								docStore.mark('bg:' + fld.key);
-								meshes.forEach((n) => (n.geometry[fld.key] = v));
+								meshes.forEach((n) => {
+									n.geometry[fld.key] = v;
+									engine.syncLinked(n);
+								});
 								engine.requestSync();
 							}}
 						/>
@@ -589,7 +869,10 @@
 							mixed={cv === MIXED}
 							oninput={(v) => {
 								docStore.mark('bg:' + fld.key);
-								meshes.forEach((n) => (n.geometry[fld.key] = v));
+								meshes.forEach((n) => {
+									n.geometry[fld.key] = v;
+									engine.syncLinked(n);
+								});
 								engine.requestSync();
 							}}
 						/>
@@ -752,9 +1035,18 @@
 				})}
 			/>
 
+			<BtnRow
+				label="Image map"
+				buttons={[
+					{
+						label: 'Choose',
+						onClick: () => assignImageTexture(...meshes.map((n) => material(n)))
+					}
+				]}
+			/>
 			<FieldSelect
-				label="Texture"
-				value={cvTex === MIXED ? 'none' : (cvTex as string)}
+				label="Pattern"
+				value={cvTex === MIXED || cvTex === 'image' ? 'none' : (cvTex as string)}
 				options={[
 					{ value: 'none', label: cvTex === MIXED ? 'None (mixed)' : 'None' },
 					{ value: 'checker', label: 'Checker' },
@@ -766,6 +1058,7 @@
 					meshes.forEach((n) => {
 						const m = material(n);
 						m.texture.type = v as MaterialSpec['texture']['type'];
+						if (v !== 'image') m.texture.assetId = null;
 						if (v !== 'none' && !m.texture.colorA) {
 							m.texture.colorA = m.color;
 							m.texture.colorB = shadeColor(m.color, -0.2);
@@ -809,7 +1102,7 @@
 	{/if}
 {/snippet}
 
-{#snippet batchShadowSection(meshes: PrimitiveNode[])}
+{#snippet batchShadowSection(meshes: (PrimitiveNode | MeshNode | ImportedNode)[])}
 	{#if meshes.length}
 		{@const cvCast = commonValue(meshes, (n) => n.castShadow)}
 		{@const cvRecv = commonValue(meshes, (n) => n.receiveShadow)}
@@ -840,16 +1133,50 @@
 	{/if}
 {/snippet}
 
+<!--
+	Imported meshes can't have their file materials edited in place, but they
+	can all be given one override colour — which is the only way to paint a
+	group of GLB parts, and previously wasn't offered at all because every
+	batch panel filtered down to primitives first.
+-->
+{#snippet importedOverrideSection(nodes: (PrimitiveNode | MeshNode | ImportedNode)[])}
+	{@const imports = nodes.filter(isImported)}
+	{#if imports.length}
+		{@const overridden = imports.filter((n) => n.materialOverride).length}
+		<div class="section">
+			<div class="section-title">Imported meshes ({imports.length})</div>
+			<div class="batch-note">
+				{#if overridden === imports.length}
+					All {imports.length} are painted with an override colour. Select one on its own to change it.
+				{:else}
+					{imports.length - overridden} of these use the materials from their own file, which Propsize can't
+					edit directly. Override them to paint them with one colour.
+				{/if}
+			</div>
+			<BtnRow
+				buttons={[
+					{
+						label: overridden === imports.length ? 'Restore file materials' : `Override ${imports.length - overridden}`,
+						onClick: () => {
+							docStore.mark(null);
+							if (overridden === imports.length) imports.forEach((n) => engine.clearMaterialOverride(n));
+							else imports.filter((n) => !n.materialOverride).forEach((n) => engine.enableMaterialOverride(n));
+							engine.requestSync();
+						}
+					},
+					{ label: 'Paste copied material', onClick: () => engine.pasteMaterialToSelection() }
+				]}
+			/>
+		</div>
+	{/if}
+{/snippet}
+
 {#snippet multiInspector()}
 	{@const roots = docStore.selectionRoots()}
-	{@const meshes = docStore.selectionMeshes(editorStore.batchIncludeChildren).filter(isPrimitive)}
+	{@const paintable = docStore.selectionMeshes(editorStore.batchIncludeChildren)}
+	{@const meshes = paintable.filter(isPrimitive)}
 
 	<div class="section-title">{selected.length} objects selected</div>
-	<div class="multi-list">
-		{#each selected as n (n.id)}
-			<div>{n.name}</div>
-		{/each}
-	</div>
 
 	<div class="section">
 		<FieldToggle
@@ -858,8 +1185,10 @@
 			onchange={(v) => (editorStore.batchIncludeChildren = v)}
 		/>
 		<div class="batch-note">
-			Transforms apply to {roots.length} top-level object{roots.length === 1 ? '' : 's'}. Material and shape apply
-			to {meshes.length} mesh{meshes.length === 1 ? '' : 'es'}.
+			Transforms apply to {roots.length} top-level object{roots.length === 1 ? '' : 's'}. Surface applies to
+			{paintable.length} mesh{paintable.length === 1 ? '' : 'es'}{meshes.length !== paintable.length
+				? `, of which ${meshes.length} ${meshes.length === 1 ? 'has' : 'have'} editable shape fields`
+				: ''}.
 		</div>
 	</div>
 
@@ -886,7 +1215,8 @@
 		{@render batchGeometrySection(meshes)}
 	{:else}
 		{@render batchMaterialSection(meshes)}
-		{@render batchShadowSection(meshes)}
+		{@render batchShadowSection(paintable)}
+		{@render importedOverrideSection(paintable)}
 	{/if}
 {/snippet}
 

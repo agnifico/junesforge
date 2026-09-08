@@ -1,16 +1,8 @@
 <script lang="ts">
 	/**
-	 * The 2D outline editor behind the lathe (and, later, shape and extrude —
-	 * they read the same profile).
-	 *
-	 * SVG rather than canvas: hit-testing, hover states and focus rings come for
-	 * free, and the whole thing stays inspectable in devtools.
-	 *
-	 * The view auto-fits the outline but rounds its bounds to a quarter unit, so
-	 * dragging a point nudges the shape without the whole canvas rescaling
-	 * underneath your cursor.
+	 * 2D outline editor for lathe silhouettes and extrude shapes. Same
+	 * Profile type; the kind changes clamping, mirroring, and presets.
 	 */
-	import { editorStore } from '$lib/propsize/core/editor.svelte';
 	import {
 		anchors,
 		insertAnchor,
@@ -22,15 +14,18 @@
 		removeAnchor,
 		setAnchorSmooth,
 		v2,
-		PROFILE_PRESETS
+		PROFILE_PRESETS,
+		SHAPE_PRESETS
 	} from '$lib/propsize/core/profile';
 	import type { Profile, Vec2 } from '$lib/propsize/core/types';
 
 	let {
 		profile,
+		kind = 'lathe',
 		onchange
 	}: {
 		profile: Profile;
+		kind?: 'lathe' | 'shape';
 		/** `key` coalesces a drag into one undo entry; null starts a fresh one. */
 		onchange: (next: Profile, key: string | null) => void;
 	} = $props();
@@ -38,6 +33,19 @@
 	const W = 260;
 	const H = 210;
 	const PAD = 14;
+	const isLathe = $derived(kind === 'lathe');
+	const presets = $derived(isLathe ? PROFILE_PRESETS : SHAPE_PRESETS);
+	const axisFields = $derived<[keyof Vec2, string][]>(
+		isLathe
+			? [
+					['x', 'Radius'],
+					['y', 'Height']
+				]
+			: [
+					['x', 'X'],
+					['y', 'Y']
+				]
+	);
 
 	let selected = $state(0);
 	let dragging = $state<number | null>(null);
@@ -46,49 +54,60 @@
 	let pts = $derived(anchors(profile));
 	let flat = $derived(profileToPoints(profile, 16));
 	let ends = $derived(openEnds(profile));
+	let closedOutline = $derived(
+		profile.closed !== false && flat.length > 2
+			? [...flat, flat[0]]
+			: flat
+	);
 
-	// Rounded-out bounds keep the view still while points move inside it.
 	let view = $derived.by(() => {
 		const b = profileBounds(profile);
 		const up = (v: number) => Math.ceil(v / 0.25) * 0.25;
 		const down = (v: number) => Math.floor(v / 0.25) * 0.25;
-		return {
-			maxX: Math.max(0.25, up(b.maxX)),
-			minY: Math.min(0, down(b.minY)),
-			maxY: Math.max(Math.min(0, down(b.minY)) + 0.25, up(b.maxY))
-		};
+		if (isLathe) {
+			return {
+				minX: 0,
+				maxX: Math.max(0.25, up(b.maxX)),
+				minY: Math.min(0, down(b.minY)),
+				maxY: Math.max(Math.min(0, down(b.minY)) + 0.25, up(b.maxY))
+			};
+		}
+		const minX = down(Math.min(b.minX, 0));
+		const maxX = up(Math.max(b.maxX, 0));
+		const minY = down(Math.min(b.minY, 0));
+		const maxY = up(Math.max(b.maxY, 0.25));
+		return { minX, maxX, minY, maxY };
 	});
 
-	// Profile space -> SVG space. y is flipped so up is up, and the axis sits in
-	// the middle rather than against the left edge — that's what makes room for
-	// the mirrored ghost, and seeing both halves is most of what makes a
-	// silhouette read as the object it will become.
 	let scale = $derived(
-		Math.min((W / 2 - PAD) / Math.max(view.maxX, 0.01), (H - PAD * 2) / Math.max(view.maxY - view.minY, 0.01))
+		isLathe
+			? Math.min(
+					(W / 2 - PAD) / Math.max(view.maxX, 0.01),
+					(H - PAD * 2) / Math.max(view.maxY - view.minY, 0.01)
+				)
+			: Math.min(
+					(W - PAD * 2) / Math.max(view.maxX - view.minX, 0.01),
+					(H - PAD * 2) / Math.max(view.maxY - view.minY, 0.01)
+				)
 	);
-	const sx = (x: number) => W / 2 + x * scale;
+	const sx = (x: number) =>
+		isLathe ? W / 2 + x * scale : PAD + (x - view.minX) * scale;
 	const sy = (y: number) => H - PAD - (y - view.minY) * scale;
-	const ux = (px: number) => (px - W / 2) / scale;
+	const ux = (px: number) =>
+		isLathe ? (px - W / 2) / scale : (px - PAD) / scale + view.minX;
 	const uy = (py: number) => (H - PAD - py) / scale + view.minY;
 
-	let outline = $derived(flat.map((p, i) => `${i ? 'L' : 'M'} ${sx(p.x)} ${sy(p.y)}`).join(' '));
-	/** Mirrored across the axis — a preview of what revolving will produce. */
+	let outline = $derived(closedOutline.map((p, i) => `${i ? 'L' : 'M'} ${sx(p.x)} ${sy(p.y)}`).join(' '));
 	let mirrored = $derived(flat.map((p, i) => `${i ? 'L' : 'M'} ${sx(-p.x)} ${sy(p.y)}`).join(' '));
 
 	function toProfileSpace(e: PointerEvent): Vec2 {
 		const rect = svgEl!.getBoundingClientRect();
 		const px = ((e.clientX - rect.left) / rect.width) * W;
 		const py = ((e.clientY - rect.top) / rect.height) * H;
-		// The 3D viewport's snap amount (often 0.5 units) is coarse next to a
-		// profile that's typically under 1 unit across — applying it here made
-		// dragging a point feel like it was fighting you, jumping between the
-		// two nearest multiples rather than landing where the cursor was. This
-		// editor has its own precise way to land exactly on the axis: the "To
-		// axis" buttons below.
 		let x = ux(px);
 		let y = uy(py);
-		// x is a radius; letting it go negative folds the surface inside out.
-		return v2(Math.max(0, x), y);
+		if (isLathe) x = Math.max(0, x);
+		return v2(x, y);
 	}
 
 	function onPointerDown(e: PointerEvent, i: number) {
@@ -108,13 +127,15 @@
 		dragging = null;
 	}
 
-	/** Click the outline to drop a point into the segment nearest the cursor. */
 	function onOutlineClick(e: PointerEvent) {
 		const at = toProfileSpace(e);
 		let best = 0;
 		let bestDist = Infinity;
-		for (let i = 0; i < pts.length - 1; i++) {
-			const d = distanceToSegment(at, pts[i], pts[i + 1]);
+		const segs = pts.length - 1 + (profile.closed ? 1 : 0);
+		for (let i = 0; i < segs; i++) {
+			const a = pts[i];
+			const b = pts[(i + 1) % pts.length];
+			const d = distanceToSegment(at, a, b);
 			if (d < bestDist) {
 				bestDist = d;
 				best = i;
@@ -140,9 +161,6 @@
 	function toggleSmooth() {
 		onchange(setAnchorSmooth(profile, selected, !isAnchorSmooth(profile, selected)), null);
 	}
-	/** Places the selected point exactly on one axis — X onto the axis of
-	 *  revolution (radius 0, closing the surface), Y onto the ground line
-	 *  (height 0) — precision a free-hand drag can't reliably hit. */
 	function snapToAxis(axis: 'x' | 'y') {
 		const p = pts[selected];
 		onchange(moveAnchor(profile, selected, axis === 'x' ? v2(0, p.y) : v2(p.x, 0)), null);
@@ -159,8 +177,13 @@
 <div class="section">
 	<div class="section-title">Profile</div>
 	<div class="prof-note">
-		Draw one side of the object; it's spun around the dashed axis. <b>Drag</b> a point to move it,
-		<b>click the outline</b> to add one.
+		{#if isLathe}
+			Draw one side of the object; it's spun around the dashed axis. <b>Drag</b> a point to move it,
+			<b>click the outline</b> to add one.
+		{:else}
+			Draw a closed outline in the XY plane; it's extruded along Z. <b>Drag</b> a point to move it,
+			<b>click the outline</b> to add one.
+		{/if}
 	</div>
 
 	<svg
@@ -169,19 +192,17 @@
 		viewBox="0 0 {W} {H}"
 		role="application"
 		tabindex="0"
-		aria-label="Lathe profile editor"
+		aria-label={isLathe ? 'Lathe profile editor' : 'Extrude profile editor'}
 		onkeydown={onKeyDown}
 		onpointermove={onPointerMove}
 		onpointerup={onPointerUp}
 	>
-		<!-- ground line and axis of revolution — inset by PAD like everything
-		     else drawn here, so the origin they cross sits with some room
-		     around it instead of running the guides flush to the panel's
-		     rounded corners. -->
 		<line class="prof-ground" x1={PAD} y1={sy(0)} x2={W - PAD} y2={sy(0)} />
 		<line class="prof-axis" x1={sx(0)} y1={PAD} x2={sx(0)} y2={H - PAD} />
 
-		<path class="prof-mirror" d={mirrored} />
+		{#if isLathe}
+			<path class="prof-mirror" d={mirrored} />
+		{/if}
 		<path class="prof-hit" d={outline} onpointerdown={onOutlineClick} role="presentation" />
 		<path class="prof-line" d={outline} />
 
@@ -201,7 +222,7 @@
 		{/each}
 	</svg>
 
-	{#if ends.bottom || ends.top}
+	{#if isLathe && (ends.bottom || ends.top)}
 		<div class="prof-warn">
 			Open at the {ends.bottom && ends.top ? 'bottom and top' : ends.bottom ? 'bottom' : 'top'} — revolving
 			this leaves a hollow shell you can see into. Move the end point onto the axis to close it.
@@ -216,11 +237,11 @@
 	</div>
 	<div class="prof-actions">
 		<div class="act-group">
-			<span class="act-group-label">To axis</span>
-			<button class="btn sm" onclick={() => snapToAxis('x')} title="Move this point onto the axis of revolution (radius 0)">
+			<span class="act-group-label">{isLathe ? 'To axis' : 'Snap to 0'}</span>
+			<button class="btn sm" onclick={() => snapToAxis('x')} title={isLathe ? 'Move this point onto the axis of revolution (radius 0)' : 'Set X to 0'}>
 				X
 			</button>
-			<button class="btn sm" onclick={() => snapToAxis('y')} title="Move this point onto the ground line (height 0)">
+			<button class="btn sm" onclick={() => snapToAxis('y')} title="Move this point onto the ground line (Y = 0)">
 				Y
 			</button>
 		</div>
@@ -228,7 +249,7 @@
 
 	<div class="field-label" style="margin-top:8px;"><span class="fname">Point {selected + 1} of {pts.length}</span></div>
 	<div class="row3">
-		{#each [['x', 'Radius'], ['y', 'Height']] as const as [axis, label] (axis)}
+		{#each axisFields as [axis, label] (axis)}
 			<div class="minifield">
 				<label for="prof-{axis}">{label}</label>
 				<input
@@ -240,10 +261,9 @@
 						const v = parseFloat((e.currentTarget as HTMLInputElement).value);
 						if (!Number.isFinite(v)) return;
 						const cur = pts[selected];
-						onchange(
-							moveAnchor(profile, selected, axis === 'x' ? v2(Math.max(0, v), cur.y) : v2(cur.x, v)),
-							`profile:${axis}`
-						);
+						const x = axis === 'x' ? (isLathe ? Math.max(0, v) : v) : cur.x;
+						const y = axis === 'y' ? v : cur.y;
+						onchange(moveAnchor(profile, selected, v2(x, y)), `profile:${axis}`);
 					}}
 				/>
 			</div>
@@ -252,7 +272,7 @@
 
 	<div class="field-label" style="margin-top:10px;"><span class="fname">Start from</span></div>
 	<div class="prof-presets">
-		{#each PROFILE_PRESETS as preset (preset.id)}
+		{#each presets as preset (preset.id)}
 			<button
 				class="btn sm"
 				onclick={() => {

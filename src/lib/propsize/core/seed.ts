@@ -19,6 +19,7 @@ export function seedStarterScene() {
 		kind: 'group',
 		visible: true,
 		locked: false,
+		dataLink: null,
 		transform: defaultTransform()
 	};
 	docStore.doc.nodes.push(cluster);
@@ -51,6 +52,7 @@ export function seedStarterScene() {
 			type: 'icosa',
 			visible: true,
 			locked: false,
+		dataLink: null,
 			transform: {
 				position: { x: rk.x, y: rk.r * 0.75, z: rk.z },
 				rotation: { x: rk.rot * 0.6, y: rk.rot, z: 0 },

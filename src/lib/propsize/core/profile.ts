@@ -69,9 +69,28 @@ export function toCurvePath(profile: Profile): THREE.CurvePath<THREE.Vector2> {
 }
 
 /**
- * Flatten to the point list LatheGeometry wants. Straight runs contribute
- * their endpoints only — subdividing a line costs triangles and buys nothing —
- * while curved segments get `curveSegments` samples each.
+ * Closed 2D shape for ExtrudeGeometry / ShapeGeometry.
+ */
+export function profileToShape(profile: Profile): THREE.Shape {
+	const shape = new THREE.Shape();
+	shape.moveTo(profile.start.x, profile.start.y);
+	for (const seg of profile.segments) {
+		if (seg.type === 'line') {
+			shape.lineTo(seg.to.x, seg.to.y);
+		} else if (seg.type === 'quad') {
+			shape.quadraticCurveTo(seg.ctrl.x, seg.ctrl.y, seg.to.x, seg.to.y);
+		} else {
+			shape.bezierCurveTo(seg.c1.x, seg.c1.y, seg.c2.x, seg.c2.y, seg.to.x, seg.to.y);
+		}
+	}
+	if (profile.closed !== false) shape.closePath();
+	return shape;
+}
+
+/**
+ * Flatten to the point list LatheGeometry and the SVG editor want. Straight
+ * runs contribute their endpoints only — subdividing a line costs triangles
+ * and buys nothing — while curved segments get `curveSegments` samples each.
  */
 export function profileToPoints(profile: Profile, curveSegments = 12): THREE.Vector2[] {
 	const out: THREE.Vector2[] = [new THREE.Vector2(profile.start.x, profile.start.y)];
@@ -95,9 +114,7 @@ export function profileToPoints(profile: Profile, curveSegments = 12): THREE.Vec
 		}
 		cur = to;
 	}
-	// A negative radius folds the surface through the axis; clamp rather than
-	// render something inside out.
-	return out.map((p) => new THREE.Vector2(Math.max(0, p.x), p.y));
+	return out;
 }
 
 /**
@@ -259,4 +276,50 @@ export const PROFILE_PRESETS: { id: string; label: string; make: () => Profile }
 
 export function defaultProfile(): Profile {
 	return PROFILE_PRESETS[0].make();
+}
+
+/** Closed outlines in the XY plane, extruded along Z. Coordinates are not radii. */
+export const SHAPE_PRESETS: { id: string; label: string; make: () => Profile }[] = [
+	{
+		id: 'plank',
+		label: 'Plank',
+		make: () => ({
+			closed: true,
+			start: v2(-0.4, 0),
+			segments: [line(0.4, 0), line(0.4, 1.2), line(-0.4, 1.2), line(-0.4, 0)]
+		})
+	},
+	{
+		id: 'arch',
+		label: 'Arch',
+		make: () => ({
+			closed: true,
+			start: v2(-0.5, 0),
+			segments: [
+				line(-0.28, 0),
+				line(-0.28, 0.7),
+				{ type: 'cubic', c1: v2(-0.28, 1.05), c2: v2(-0.22, 1.2), to: v2(0, 1.2) },
+				{ type: 'cubic', c1: v2(0.22, 1.2), c2: v2(0.28, 1.05), to: v2(0.28, 0.7) },
+				line(0.28, 0),
+				line(0.5, 0),
+				line(0.5, 0.85),
+				{ type: 'cubic', c1: v2(0.5, 1.35), c2: v2(0.28, 1.55), to: v2(0, 1.55) },
+				{ type: 'cubic', c1: v2(-0.28, 1.55), c2: v2(-0.5, 1.35), to: v2(-0.5, 0.85) },
+				line(-0.5, 0)
+			]
+		})
+	},
+	{
+		id: 'diamond',
+		label: 'Diamond',
+		make: () => ({
+			closed: true,
+			start: v2(0, 0),
+			segments: [line(0.35, 0.55), line(0, 1.1), line(-0.35, 0.55), line(0, 0)]
+		})
+	}
+];
+
+export function defaultShapeProfile(): Profile {
+	return SHAPE_PRESETS[0].make();
 }

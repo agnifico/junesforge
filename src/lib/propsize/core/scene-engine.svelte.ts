@@ -18,10 +18,43 @@ import { defaultMaterial, buildThreeMaterial, updateMaterialInPlace } from './ma
 import { randomPaletteColor } from './palette';
 import { defaultTransform, round3, D2R, R2D } from './utils';
 import { SimpleOrbitControls } from './orbit-controls';
-import { isGroup, isPrimitive, isImported } from './types';
-import type { SceneNode, PrimitiveNode, GroupNode, ImportedNode, PrimitiveType, Asset, AssetSource, Vec3 } from './types';
-import { importModel, normalizeImport, type ImportPart } from '../import/loaders';
+import { isGroup, isPrimitive, isImported, isAuthoredMesh } from './types';
+import type { SceneNode, PrimitiveNode, GroupNode, ImportedNode, MeshNode, PrimitiveType, Asset, AssetSource, Vec3 } from './types';
+import { importModel, normalizeImport, setImportRenderer, type ImportPart } from '../import/loaders';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { dataUrlToFile } from '../import/local-import';
+import { dataUrlToPayload, geometryToPayload, payloadToDataUrl, payloadToGeometry, triangleCount } from './mesh-geom';
+import {
+	type BMesh,
+	bmeshFromGeometry,
+	bmeshToGeometry,
+	cloneBMesh,
+	extrudeFaces,
+	insetFaces,
+	loopCut,
+	bevelEdges,
+	mergeVerts,
+	deleteFaces,
+	deleteVerts,
+	deleteEdges,
+	applyDelta,
+	averageNormal,
+	edgeKey,
+	edgesOf
+} from './bmesh';
+import {
+	buildOverlay,
+	syncOverlay,
+	pickVertex,
+	pickEdge,
+	pickFace,
+	selectedVertSet,
+	parseEdge,
+	selectionCentroid,
+	grabWeights,
+	worldToScreen
+} from './model-overlay';
+import type { EditSelectMode } from './editor.svelte';
 
 type Axis = 'x' | 'y' | 'z';
 
@@ -171,6 +204,9 @@ type GizmoTarget = {
 	startWorldPos?: THREE.Vector3;
 	startWorldQ?: THREE.Quaternion;
 	parentWorldQInv?: THREE.Quaternion;
+	/** This object's own world-space bounding-box centre at grab time — the
+	 *  pivot "Each" turns and scales it around. */
+	ownCentre?: THREE.Vector3;
 	/** Object-local bounding box (already includes startScale) and local
 	 *  rotation, captured for one-sided (anchor-the-far-edge) scaling. */
 	localBox?: THREE.Box3;
@@ -209,12 +245,18 @@ export class SceneEngine {
 
 	/** Viewport HUD data â the one piece of engine state the template reads. */
 	specPlate = $state<SpecPlateData>(null);
+	modelSelCount = $state(0);
+	modelVertCount = $state(0);
+	modelFaceCount = $state(0);
 
 	#holder: HTMLElement | null = null;
 	#resizeObserver: ResizeObserver | null = null;
 	#raf = 0;
 	#syncScheduled = false;
 	#disposed = false;
+
+	#pmrem: THREE.PMREMGenerator | null = null;
+	#envTexture: THREE.Texture | null = null;
 
 	#gizmoGroup: THREE.Group | null = null;
 	#gizmoParts: Record<GizmoMode, THREE.Group> = {} as Record<GizmoMode, THREE.Group>;
@@ -237,7 +279,16 @@ export class SceneEngine {
 		this.renderer.shadowMap.enabled = true;
 		this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 		this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+		// Imported glTF/FBX materials are physically-based: a metallic surface
+		// reflects its surroundings and emits nothing of its own, so with no
+		// environment to reflect it renders black no matter how many lights are
+		// in the scene. That is the single biggest reason imported models "lose
+		// their colours". A neutral room IBL costs one render at mount and makes
+		// PBR imports look the way they do in every other viewer.
+		this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+		this.renderer.toneMappingExposure = 1.0;
 		holder.appendChild(this.renderer.domElement);
+		setImportRenderer(this.renderer);
 
 		this.sceneRoot = new THREE.Group();
 		this.sceneRoot.name = 'PropsizeRoot';
@@ -245,6 +296,12 @@ export class SceneEngine {
 
 		this.helpersGroup = new THREE.Group();
 		this.scene.add(this.helpersGroup);
+
+		this.#pmrem = new THREE.PMREMGenerator(this.renderer);
+		this.#envTexture = this.#pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+		// `environment` only — not `background`, which stays the flat studio
+		// colour the user picked.
+		this.scene.environment = this.#envTexture;
 
 		this.hemiLight = new THREE.HemisphereLight(0xdfe6ea, 0x2a2620, editorStore.ambientIntensity);
 		this.scene.add(this.hemiLight);
@@ -298,8 +355,16 @@ export class SceneEngine {
 		this.renderer?.domElement.removeEventListener('dblclick', this.focusOnSelection);
 		window.removeEventListener('pointermove', this.#onGizmoMove);
 		window.removeEventListener('pointerup', this.#onGizmoUp);
+		window.removeEventListener('pointermove', this.#onMarqueeMove);
+		window.removeEventListener('pointerup', this.#onMarqueeUp);
 		this.threeObjects.forEach(disposeObject3D);
 		this.threeObjects.clear();
+		this.#disposeEditOverlay();
+		setImportRenderer(null);
+		this.#envTexture?.dispose();
+		this.#pmrem?.dispose();
+		this.#envTexture = null;
+		this.#pmrem = null;
 		this.renderer?.dispose();
 		if (this.#holder) this.#holder.replaceChildren();
 	}
@@ -319,6 +384,7 @@ export class SceneEngine {
 		this.controls.update();
 		this.selectionHelpers.forEach((bh) => bh.update());
 		this.#updateGizmoTransform();
+		this.#syncEditSession();
 		this.#updateCameraKeys();
 		this.renderer.render(this.scene, this.camera);
 		this.#raf = requestAnimationFrame(this.#tick);
@@ -424,6 +490,8 @@ export class SceneEngine {
 		}
 		this.#refreshSelectionHighlight();
 		this.#updateSpecPlate();
+		this.#applyIsolationLook();
+		this.#syncEditSession();
 	}
 
 	/** Loaded + normalized model templates, keyed by assetId. Cloned per node
@@ -431,20 +499,71 @@ export class SceneEngine {
 	 *  independent objects in the scene graph. */
 	#assetCache = new Map<string, THREE.Object3D>();
 	#pendingAssetLoads = new Set<string>();
+	#meshGeoCache = new Map<string, THREE.BufferGeometry>();
+	#meshGen = new Map<string, number>();
+	#edit: {
+		bmesh: BMesh;
+		triToFace: number[];
+		assetId: string;
+		sig: string;
+		overlay: THREE.Group;
+		verts: Set<number>;
+		edges: Set<string>;
+		faces: Set<number>;
+		grab: {
+			startVerts: [number, number, number][];
+			weights: number[];
+			plane: THREE.Plane;
+			p0: THREE.Vector3;
+			axis: THREE.Vector3 | null;
+			nodeId: string;
+		} | null;
+		pick: { x: number; y: number; additive: boolean; hit: { kind: EditSelectMode; id: string | number } | null } | null;
+	} | null = null;
+	#editConsumedClick = false;
+
+	#geometryForMeshAsset(assetId: string): THREE.BufferGeometry | null {
+		const cached = this.#meshGeoCache.get(assetId);
+		if (cached) return cached;
+		const asset = docStore.doc.assets[assetId];
+		if (!asset || asset.kind !== 'mesh' || asset.source.type !== 'embedded') return null;
+		const payload = dataUrlToPayload(asset.source.dataUrl);
+		if (!payload) return null;
+		const geo = payloadToGeometry(payload);
+		this.#meshGeoCache.set(assetId, geo);
+		if (!this.#meshGen.has(assetId)) this.#meshGen.set(assetId, 1);
+		return geo;
+	}
 
 	#createObject(node: SceneNode): THREE.Object3D {
 		if (isGroup(node)) {
 			const g = new THREE.Group();
 			g.userData.nodeId = node.id;
+			g.userData.nodeKind = node.kind;
 			return g;
 		}
 		if (isPrimitive(node)) {
 			const geo = GEO_DEFS[node.type].build(node.geometry);
 			const material = docStore.doc.materials[node.materialId] ?? defaultMaterial();
-			const mat = buildThreeMaterial(material, editorStore.wireAll);
+			const mat = buildThreeMaterial(material, editorStore.wireAll, this.#resolveTextureUrl);
 			const mesh = new THREE.Mesh(geo, mat);
 			mesh.userData.nodeId = node.id;
+			mesh.userData.nodeKind = node.kind;
 			mesh.userData.geoSig = JSON.stringify(node.geometry);
+			mesh.castShadow = node.castShadow;
+			mesh.receiveShadow = node.receiveShadow;
+			return mesh;
+		}
+		if (isAuthoredMesh(node)) {
+			const src = this.#geometryForMeshAsset(node.assetId);
+			const geo = src ? src.clone() : new THREE.BoxGeometry(0.6, 0.6, 0.6);
+			const material = docStore.doc.materials[node.materialId] ?? defaultMaterial();
+			const mat = buildThreeMaterial(material, editorStore.wireAll, this.#resolveTextureUrl);
+			const mesh = new THREE.Mesh(geo, mat);
+			mesh.userData.nodeId = node.id;
+			mesh.userData.nodeKind = node.kind;
+			mesh.userData.meshAssetId = node.assetId;
+			mesh.userData.meshGen = this.#meshGen.get(node.assetId) ?? 0;
 			mesh.castShadow = node.castShadow;
 			mesh.receiveShadow = node.receiveShadow;
 			return mesh;
@@ -462,6 +581,7 @@ export class SceneEngine {
 		if (!template) this.#tryAutoResolveEmbeddedAsset(node.assetId);
 		const obj = template ? this.#buildImportedObject(template, node.part) : this.#placeholderObject();
 		obj.userData.nodeId = node.id;
+		obj.userData.nodeKind = node.kind;
 		obj.userData.isPlaceholder = !template;
 		obj.userData.isAssetClone = !!template;
 		this.#applyMaterialOverride(obj, node);
@@ -511,7 +631,7 @@ export class SceneEngine {
 		if (!node.materialOverride) return;
 		const spec = docStore.doc.materials[node.materialOverride];
 		if (!spec) return;
-		const mat = buildThreeMaterial(spec, editorStore.wireAll);
+		const mat = buildThreeMaterial(spec, editorStore.wireAll, this.#resolveTextureUrl);
 		obj.userData.overrideMaterial = mat;
 		obj.traverse((o) => {
 			const mesh = o as THREE.Mesh;
@@ -532,10 +652,18 @@ export class SceneEngine {
 	 *  placeholder for the real thing. Mirrors addImportedObject()'s
 	 *  normalize-then-reset-to-identity convention so the template lands in
 	 *  the same frame of reference the node's already-saved transform expects. */
+	#resolveTextureUrl = (assetId: string): string | null => {
+		const asset = docStore.doc.assets[assetId];
+		if (!asset || asset.kind !== 'texture') return null;
+		if (asset.source.type === 'embedded') return asset.source.dataUrl;
+		if (asset.source.type === 'remote') return asset.source.url;
+		return null;
+	};
+
 	#tryAutoResolveEmbeddedAsset(assetId: string) {
 		if (this.#pendingAssetLoads.has(assetId) || this.#assetCache.has(assetId)) return;
 		const asset = docStore.doc.assets[assetId];
-		if (!asset || asset.source.type !== 'embedded') return;
+		if (!asset || asset.kind !== 'model' || asset.source.type !== 'embedded') return;
 		this.#pendingAssetLoads.add(assetId);
 		const file = dataUrlToFile(asset.source.dataUrl, asset.name, asset.format);
 		importModel(file)
@@ -565,6 +693,12 @@ export class SceneEngine {
 	}
 
 	#updateExistingObject(obj: THREE.Object3D, node: SceneNode) {
+		if (obj.userData.nodeKind && obj.userData.nodeKind !== node.kind) {
+			detachObject3D(obj);
+			this.threeObjects.delete(node.id);
+			this.requestSync();
+			return;
+		}
 		if (isPrimitive(node)) {
 			const mesh = obj as THREE.Mesh;
 			const sig = JSON.stringify(node.geometry);
@@ -574,7 +708,28 @@ export class SceneEngine {
 				mesh.userData.geoSig = sig;
 			}
 			const material = docStore.doc.materials[node.materialId] ?? defaultMaterial();
-			updateMaterialInPlace(mesh.material as THREE.MeshStandardMaterial, material, editorStore.wireAll);
+			updateMaterialInPlace(mesh.material as THREE.MeshStandardMaterial, material, editorStore.wireAll, this.#resolveTextureUrl);
+			mesh.castShadow = node.castShadow;
+			mesh.receiveShadow = node.receiveShadow;
+			return;
+		}
+		if (isAuthoredMesh(node)) {
+			const mesh = obj as THREE.Mesh;
+			const gen = this.#meshGen.get(node.assetId) ?? 0;
+			if (mesh.userData.meshAssetId !== node.assetId || mesh.userData.meshGen !== gen) {
+				const src = this.#geometryForMeshAsset(node.assetId);
+				if (mesh.geometry) mesh.geometry.dispose();
+				mesh.geometry = src ? src.clone() : new THREE.BoxGeometry(0.6, 0.6, 0.6);
+				mesh.userData.meshAssetId = node.assetId;
+				mesh.userData.meshGen = gen;
+			}
+			const material = docStore.doc.materials[node.materialId] ?? defaultMaterial();
+			updateMaterialInPlace(
+				mesh.material as THREE.MeshStandardMaterial,
+				material,
+				editorStore.wireAll,
+				this.#resolveTextureUrl
+			);
 			mesh.castShadow = node.castShadow;
 			mesh.receiveShadow = node.receiveShadow;
 			return;
@@ -605,7 +760,7 @@ export class SceneEngine {
 			if (node.materialOverride) {
 				const spec = docStore.doc.materials[node.materialOverride];
 				const mat = obj.userData.overrideMaterial as THREE.MeshStandardMaterial | undefined;
-				if (spec && mat) updateMaterialInPlace(mat, spec, editorStore.wireAll);
+				if (spec && mat) updateMaterialInPlace(mat, spec, editorStore.wireAll, this.#resolveTextureUrl);
 			}
 			this.#applyShadowFlags(obj, node.castShadow, node.receiveShadow);
 		}
@@ -613,6 +768,9 @@ export class SceneEngine {
 
 	// ---- selection --------------------------------------------------------
 	setSelection(ids: string[]) {
+		if (editorStore.isolatedId) {
+			ids = [editorStore.isolatedId];
+		}
 		docStore.selectedIds = ids.filter((id) => docStore.node(id));
 		// The selection outline and spec plate only repaint inside syncScene(),
 		// which is otherwise only scheduled by document edits — without this a
@@ -670,10 +828,12 @@ export class SceneEngine {
 	// unrelated edit happens to trigger a sync. Route through here instead.
 	undo() {
 		docStore.undo();
+		if (editorStore.isolatedId && !docStore.node(editorStore.isolatedId)) this.exitIsolation(false);
 		this.requestSync();
 	}
 	redo() {
 		docStore.redo();
+		if (editorStore.isolatedId && !docStore.node(editorStore.isolatedId)) this.exitIsolation(false);
 		this.requestSync();
 	}
 
@@ -695,7 +855,740 @@ export class SceneEngine {
 			(bh.material as THREE.Material).dispose();
 		});
 		this.selectionHelpers.clear();
+		this.exitIsolation(false);
 		this.requestSync();
+	}
+
+	#clearIsolationDim(mesh: THREE.Mesh) {
+		const clone = mesh.userData.dimClone as THREE.Material | undefined;
+		const orig = mesh.userData.dimOrig as THREE.Material | THREE.Material[] | undefined;
+		if (!clone) return;
+		clone.dispose();
+		if (orig) mesh.material = orig;
+		mesh.userData.dimClone = null;
+		mesh.userData.dimOrig = null;
+	}
+
+	#applyIsolationLook() {
+		const iso = editorStore.isolatedId;
+		if (iso && !docStore.node(iso)) {
+			editorStore.isolatedId = null;
+		}
+		const isolated = editorStore.isolatedId;
+		for (const [id, obj] of this.threeObjects) {
+			const dim = !!isolated && id !== isolated;
+			obj.traverse((o) => {
+				const mesh = o as THREE.Mesh;
+				if (!mesh.isMesh) return;
+				this.#clearIsolationDim(mesh);
+				if (!dim) return;
+				const orig = mesh.material;
+				const src = Array.isArray(orig) ? orig[0] : orig;
+				if (!src) return;
+				const clone = src.clone();
+				clone.transparent = true;
+				clone.opacity = 0.14;
+				clone.depthWrite = false;
+				mesh.userData.dimOrig = orig;
+				mesh.userData.dimClone = clone;
+				mesh.material = clone;
+			});
+		}
+	}
+
+	exitIsolation(toast = true) {
+		if (!editorStore.isolatedId) return;
+		editorStore.isolatedId = null;
+		editorStore.isolationTool = 'model';
+		editorStore.editSelectMode = 'vertex';
+		this.#disposeEditOverlay();
+		this.requestSync();
+		if (toast) editorStore.toast('Back to the scene');
+	}
+
+	async isolateSelection() {
+		if (editorStore.isolatedId) {
+			this.exitIsolation();
+			return;
+		}
+		const roots = docStore.selectionRoots();
+		if (roots.length !== 1) {
+			editorStore.toast('Select one object to isolate');
+			return;
+		}
+		let node = roots[0];
+		if (isGroup(node)) {
+			editorStore.toast('Isolation is one object at a time — pick a child, not the group');
+			return;
+		}
+		if (isPrimitive(node)) {
+			if (docStore.isLocked(node.id)) {
+				editorStore.toast('Unlock this object before converting it to a mesh');
+				return;
+			}
+			const label = GEO_DEFS[node.type].label;
+			const choice = await editorStore.prompt({
+				title: 'Convert to mesh?',
+				body: `"${node.name}" will stop being a parametric ${label}. The size sliders go away. You can undo. Isolation needs a mesh to model and paint.`,
+				choices: [
+					{ label: 'Cancel', value: 'cancel' },
+					{ label: 'Convert and isolate', value: 'ok', primary: true }
+				]
+			});
+			if (choice !== 'ok') return;
+			const converted = this.convertPrimitiveToMesh(node);
+			if (!converted) return;
+			node = converted;
+		}
+		editorStore.isolatedId = node.id;
+		editorStore.isolationTool = 'model';
+		this.setSelection([node.id]);
+		this.focusOnSelection();
+		this.requestSync();
+		editorStore.toast(`Isolating ${node.name} — 1/2/3 vertex edge face · Esc back`);
+	}
+
+	convertPrimitiveToMesh(node: PrimitiveNode): MeshNode | null {
+		const live = this.threeObjects.get(node.id) as THREE.Mesh | undefined;
+		const raw = live?.isMesh ? live.geometry : GEO_DEFS[node.type].build(node.geometry);
+		const baked = bmeshToGeometry(bmeshFromGeometry(raw));
+		const payload = geometryToPayload(baked.geometry);
+		const assetId = docStore.newId('mesh');
+		const asset: Asset = {
+			id: assetId,
+			name: `${node.name} mesh`,
+			kind: 'mesh',
+			format: 'meshjson',
+			source: { type: 'embedded', dataUrl: payloadToDataUrl(payload) }
+		};
+		const verts = baked.geometry.getAttribute('position').count;
+		const meshNode: MeshNode = {
+			id: node.id,
+			name: node.name,
+			parentId: node.parentId,
+			visible: node.visible,
+			locked: node.locked,
+			dataLink: node.dataLink,
+			transform: { ...node.transform, position: { ...node.transform.position }, rotation: { ...node.transform.rotation }, scale: { ...node.transform.scale } },
+			kind: 'mesh',
+			assetId,
+			materialId: node.materialId,
+			castShadow: node.castShadow,
+			receiveShadow: node.receiveShadow,
+			stats: { vertices: verts, triangles: triangleCount(payload) }
+		};
+		docStore.mark(null);
+		docStore.doc.assets[assetId] = asset;
+		this.#meshGeoCache.set(assetId, baked.geometry);
+		this.#meshGen.set(assetId, 1);
+		const i = docStore.doc.nodes.findIndex((n) => n.id === node.id);
+		if (i < 0) return null;
+		docStore.doc.nodes[i] = meshNode;
+		const obj = this.threeObjects.get(node.id);
+		if (obj) {
+			detachObject3D(obj);
+			this.threeObjects.delete(node.id);
+		}
+		if (meshNode.dataLink) {
+			const stats = meshNode.stats;
+			for (const n of [...docStore.doc.nodes]) {
+				if (n.id === meshNode.id || n.dataLink !== meshNode.dataLink || !isPrimitive(n)) continue;
+				const sibling: MeshNode = {
+					id: n.id,
+					name: n.name,
+					parentId: n.parentId,
+					visible: n.visible,
+					locked: n.locked,
+					dataLink: n.dataLink,
+					transform: {
+						...n.transform,
+						position: { ...n.transform.position },
+						rotation: { ...n.transform.rotation },
+						scale: { ...n.transform.scale }
+					},
+					kind: 'mesh',
+					assetId,
+					materialId: n.materialId,
+					castShadow: n.castShadow,
+					receiveShadow: n.receiveShadow,
+					stats: { ...stats }
+				};
+				const si = docStore.doc.nodes.findIndex((x) => x.id === n.id);
+				if (si >= 0) docStore.doc.nodes[si] = sibling;
+				const so = this.threeObjects.get(n.id);
+				if (so) {
+					detachObject3D(so);
+					this.threeObjects.delete(n.id);
+				}
+			}
+		}
+		this.syncScene();
+		return meshNode;
+	}
+
+	#modelling(): boolean {
+		return (
+			!!editorStore.isolatedId &&
+			editorStore.isolationTool === 'model' &&
+			!!this.#edit
+		);
+	}
+
+	#disposeEditOverlay() {
+		if (!this.#edit) return;
+		this.#edit.overlay.parent?.remove(this.#edit.overlay);
+		this.#edit.overlay.traverse((o) => {
+			const m = o as THREE.Mesh;
+			if (m.geometry) m.geometry.dispose();
+			const mat = (m as THREE.Mesh).material;
+			if (mat && !Array.isArray(mat) && 'dispose' in mat) (mat as THREE.Material).dispose();
+		});
+		this.#edit = null;
+		this.modelSelCount = 0;
+		this.modelVertCount = 0;
+		this.modelFaceCount = 0;
+	}
+
+	#assetSig(assetId: string): string {
+		const asset = docStore.doc.assets[assetId];
+		if (!asset || asset.source.type !== 'embedded') return assetId;
+		const d = asset.source.dataUrl;
+		return assetId + ':' + d.length + ':' + d.slice(d.length - 24);
+	}
+
+	#syncEditSession() {
+		const iso = editorStore.isolatedId;
+		const node = iso ? docStore.node(iso) : null;
+		if (!iso || !node || !isAuthoredMesh(node) || editorStore.isolationTool !== 'model') {
+			if (this.#edit) this.#edit.overlay.visible = false;
+			if (!iso || !node || !isAuthoredMesh(node)) this.#disposeEditOverlay();
+			return;
+		}
+		const sig = this.#assetSig(node.assetId);
+		const obj = this.threeObjects.get(node.id);
+		if (!this.#edit || this.#edit.assetId !== node.assetId || this.#edit.sig !== sig) {
+			const src = this.#geometryForMeshAsset(node.assetId);
+			if (!src) return;
+			const overlay = this.#edit?.overlay ?? buildOverlay({ verts: [], faces: [] });
+			if (this.#edit && this.#edit.assetId !== node.assetId) {
+				this.#edit.overlay.parent?.remove(this.#edit.overlay);
+			}
+			const bm = bmeshFromGeometry(src);
+			const baked = bmeshToGeometry(bm);
+			this.#edit = {
+				bmesh: bm,
+				triToFace: baked.triToFace,
+				assetId: node.assetId,
+				sig,
+				overlay,
+				verts: new Set(),
+				edges: new Set(),
+				faces: new Set(),
+				grab: null,
+				pick: null
+			};
+			const live = obj as THREE.Mesh | undefined;
+			if (live?.isMesh) {
+				live.geometry.dispose();
+				live.geometry = baked.geometry.clone();
+			} else {
+				baked.geometry.dispose();
+			}
+		}
+		if (obj && this.#edit.overlay.parent !== obj) obj.add(this.#edit.overlay);
+		this.#edit.overlay.visible = true;
+		this.#paintEditOverlay();
+	}
+
+	#paintEditOverlay() {
+		if (!this.#edit) return;
+		syncOverlay(
+			this.#edit.overlay,
+			this.#edit.bmesh,
+			editorStore.editSelectMode,
+			this.#edit.verts,
+			this.#edit.edges,
+			this.#edit.faces
+		);
+		this.modelSelCount =
+			editorStore.editSelectMode === 'vertex'
+				? this.#edit.verts.size
+				: editorStore.editSelectMode === 'edge'
+					? this.#edit.edges.size
+					: this.#edit.faces.size;
+		this.modelVertCount = this.#edit.bmesh.verts.length;
+		this.modelFaceCount = this.#edit.bmesh.faces.length;
+	}
+
+	#coreVerts(): Set<number> {
+		if (!this.#edit) return new Set();
+		return selectedVertSet(
+			this.#edit.bmesh,
+			editorStore.editSelectMode,
+			this.#edit.verts,
+			this.#edit.edges,
+			this.#edit.faces
+		);
+	}
+
+	hasModelSelection() {
+		return this.modelSelCount > 0;
+	}
+
+	clearModelSelection() {
+		if (!this.#edit) return;
+		this.#edit.verts.clear();
+		this.#edit.edges.clear();
+		this.#edit.faces.clear();
+		this.#paintEditOverlay();
+	}
+
+	setEditSelectMode(mode: EditSelectMode) {
+		editorStore.editSelectMode = mode;
+		this.#paintEditOverlay();
+	}
+
+	selectAllModel() {
+		if (!this.#edit) return;
+		this.#edit.verts = new Set(this.#edit.bmesh.verts.map((_, i) => i));
+		this.#edit.edges = new Set();
+		for (const [a, b] of edgesOf(this.#edit.bmesh)) this.#edit.edges.add(edgeKey(a, b));
+		this.#edit.faces = new Set(this.#edit.bmesh.faces.map((_, i) => i));
+		if (editorStore.editSelectMode === 'vertex') {
+			this.#edit.edges.clear();
+			this.#edit.faces.clear();
+		} else if (editorStore.editSelectMode === 'edge') {
+			this.#edit.verts.clear();
+			this.#edit.faces.clear();
+		} else {
+			this.#edit.verts.clear();
+			this.#edit.edges.clear();
+		}
+		this.#paintEditOverlay();
+	}
+
+	#commitMesh(opts?: { coalesce?: string }) {
+		if (!this.#edit) return;
+		const node = editorStore.isolatedId ? docStore.node(editorStore.isolatedId) : null;
+		if (!node || !isAuthoredMesh(node)) return;
+		if (opts?.coalesce) docStore.mark(opts.coalesce);
+		else docStore.mark(null);
+		const baked = bmeshToGeometry(this.#edit.bmesh);
+		const payload = geometryToPayload(baked.geometry);
+		const asset = docStore.doc.assets[node.assetId];
+		if (asset && asset.source.type === 'embedded') {
+			// Replace the source object rather than mutating its dataUrl in
+			// place: undo entries hold these by reference (see
+			// DocumentStore.#snapshot), so an in-place edit would silently
+			// rewrite the mesh bytes inside every earlier history step too,
+			// making undo of a model edit a no-op.
+			asset.source = { type: 'embedded', dataUrl: payloadToDataUrl(payload) };
+		}
+		const old = this.#meshGeoCache.get(node.assetId);
+		if (old && old !== baked.geometry) old.dispose();
+		this.#meshGeoCache.set(node.assetId, baked.geometry);
+		this.#meshGen.set(node.assetId, (this.#meshGen.get(node.assetId) ?? 0) + 1);
+		this.#edit.triToFace = baked.triToFace;
+		this.#edit.sig = this.#assetSig(node.assetId);
+		node.stats = { vertices: this.#edit.bmesh.verts.length, triangles: triangleCount(payload) };
+		this.syncLinked(node);
+		const live = this.threeObjects.get(node.id) as THREE.Mesh | undefined;
+		if (live?.isMesh) {
+			live.geometry.dispose();
+			live.geometry = baked.geometry.clone();
+			live.userData.meshGen = this.#meshGen.get(node.assetId);
+		}
+		this.#paintEditOverlay();
+		this.requestSync();
+	}
+
+	#applyLivePositions() {
+		if (!this.#edit) return;
+		const node = editorStore.isolatedId ? docStore.node(editorStore.isolatedId) : null;
+		if (!node) return;
+		const live = this.threeObjects.get(node.id) as THREE.Mesh | undefined;
+		const geo = live?.geometry;
+		const pos = geo?.getAttribute('position');
+		if (!geo || !pos || pos.count !== this.#edit.bmesh.verts.length) {
+			this.#commitMesh({ coalesce: 'model-grab' });
+			return;
+		}
+		for (let i = 0; i < this.#edit.bmesh.verts.length; i++) {
+			const v = this.#edit.bmesh.verts[i];
+			pos.setXYZ(i, v[0], v[1], v[2]);
+		}
+		pos.needsUpdate = true;
+		geo.computeVertexNormals();
+		this.#paintEditOverlay();
+	}
+
+	#editPointerDown(e: PointerEvent): boolean {
+		if (!this.#edit) this.#syncEditSession();
+		if (!this.#edit || this.#edit.grab) return false;
+		const hit = this.#pickAt(e);
+		if (!hit) return false;
+		this.#editConsumedClick = true;
+		this.#edit.pick = {
+			x: e.clientX,
+			y: e.clientY,
+			additive: e.shiftKey || e.ctrlKey || e.metaKey,
+			hit
+		};
+		window.addEventListener('pointermove', this.#onEditPickMove);
+		window.addEventListener('pointerup', this.#onEditPickUp);
+		return true;
+	}
+
+	#onEditPickMove = (e: PointerEvent) => {
+		const p = this.#edit?.pick;
+		if (!p || !this.#edit) return;
+		if (p.additive) return;
+		if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < 5) return;
+		window.removeEventListener('pointermove', this.#onEditPickMove);
+		window.removeEventListener('pointerup', this.#onEditPickUp);
+		if (p.hit && !this.#hitSelected(p.hit)) this.#applyPick(p.hit, false);
+		this.#edit.pick = null;
+		this.#beginGrab(e, false);
+	};
+
+	#onEditPickUp = () => {
+		window.removeEventListener('pointermove', this.#onEditPickMove);
+		window.removeEventListener('pointerup', this.#onEditPickUp);
+		const p = this.#edit?.pick;
+		if (!this.#edit) return;
+		this.#edit.pick = null;
+		if (p?.hit) this.#applyPick(p.hit, p.additive);
+	};
+
+	#pickAt(e: PointerEvent) {
+		if (!this.#edit) return null;
+		const node = editorStore.isolatedId ? docStore.node(editorStore.isolatedId) : null;
+		if (!node) return null;
+		const obj = this.threeObjects.get(node.id);
+		if (!obj) return null;
+		const rect = this.renderer.domElement.getBoundingClientRect();
+		const sx = e.clientX - rect.left;
+		const sy = e.clientY - rect.top;
+		const mode = editorStore.editSelectMode;
+		if (mode === 'vertex') {
+			const id = pickVertex(this.#edit.bmesh, obj, this.camera, sx, sy, rect.width, rect.height);
+			return id === null ? null : { kind: mode, id };
+		}
+		if (mode === 'edge') {
+			const id = pickEdge(this.#edit.bmesh, obj, this.camera, sx, sy, rect.width, rect.height);
+			return id === null ? null : { kind: mode, id };
+		}
+		this.raycaster.setFromCamera(this.#pointerNDC(e), this.camera);
+		const id = pickFace(this.raycaster, obj, this.#edit.triToFace);
+		return id === null ? null : { kind: mode, id };
+	}
+
+	#applyPick(hit: { kind: EditSelectMode; id: string | number }, additive: boolean) {
+		if (!this.#edit) return;
+		if (!additive) {
+			this.#edit.verts.clear();
+			this.#edit.edges.clear();
+			this.#edit.faces.clear();
+		}
+		if (hit.kind === 'vertex') {
+			const i = hit.id as number;
+			if (this.#edit.verts.has(i) && additive) this.#edit.verts.delete(i);
+			else this.#edit.verts.add(i);
+		} else if (hit.kind === 'edge') {
+			const k = hit.id as string;
+			if (this.#edit.edges.has(k) && additive) this.#edit.edges.delete(k);
+			else this.#edit.edges.add(k);
+		} else {
+			const i = hit.id as number;
+			if (this.#edit.faces.has(i) && additive) this.#edit.faces.delete(i);
+			else this.#edit.faces.add(i);
+		}
+		this.#paintEditOverlay();
+	}
+
+	#hitSelected(hit: { kind: EditSelectMode; id: string | number }) {
+		if (!this.#edit) return false;
+		if (hit.kind === 'vertex') return this.#edit.verts.has(hit.id as number);
+		if (hit.kind === 'edge') return this.#edit.edges.has(hit.id as string);
+		return this.#edit.faces.has(hit.id as number);
+	}
+
+	#beginGrab(e: PointerEvent, alongNormal: boolean) {
+		if (!this.#edit) return false;
+		const core = this.#coreVerts();
+		if (!core.size) return false;
+		const node = editorStore.isolatedId ? docStore.node(editorStore.isolatedId) : null;
+		if (!node) return false;
+		const obj = this.threeObjects.get(node.id);
+		if (!obj) return false;
+		obj.updateWorldMatrix(true, false);
+		const local = selectionCentroid(this.#edit.bmesh, core);
+		const origin = local.clone().applyMatrix4(obj.matrixWorld);
+		let axis: THREE.Vector3 | null = null;
+		if (alongNormal && editorStore.editSelectMode === 'face' && this.#edit.faces.size) {
+			axis = averageNormal(this.#edit.bmesh, [...this.#edit.faces]).transformDirection(
+				obj.matrixWorld
+			);
+			axis.normalize();
+		}
+		const plane = axis
+			? new THREE.Plane().setFromNormalAndCoplanarPoint(
+					new THREE.Vector3().crossVectors(axis, this.camera.getWorldDirection(new THREE.Vector3())).cross(axis).normalize(),
+					origin
+				)
+			: this.#cameraFacingPlane(origin);
+		this.raycaster.setFromCamera(this.#pointerNDC(e), this.camera);
+		const p0 = new THREE.Vector3();
+		if (!this.raycaster.ray.intersectPlane(plane, p0)) return false;
+		docStore.mark('model-grab');
+		this.#edit.grab = {
+			startVerts: this.#edit.bmesh.verts.map((v) => [v[0], v[1], v[2]] as [number, number, number]),
+			weights: grabWeights(
+				this.#edit.bmesh,
+				core,
+				editorStore.modelProportional,
+				editorStore.modelPropRadius
+			),
+			plane,
+			p0,
+			axis,
+			nodeId: node.id
+		};
+		this.gizmoWasDragging = true;
+		window.addEventListener('pointermove', this.#onEditGrabMove);
+		window.addEventListener('pointerup', this.#onEditGrabUp);
+		return true;
+	}
+
+	#onEditGrabMove = (e: PointerEvent) => {
+		const grab = this.#edit?.grab;
+		if (!grab || !this.#edit) return;
+		const obj = this.threeObjects.get(grab.nodeId);
+		if (!obj) return;
+		this.raycaster.setFromCamera(this.#pointerNDC(e), this.camera);
+		const p = new THREE.Vector3();
+		if (!this.raycaster.ray.intersectPlane(grab.plane, p)) return;
+		let worldDelta = p.clone().sub(grab.p0);
+		if (grab.axis) worldDelta = grab.axis.clone().multiplyScalar(worldDelta.dot(grab.axis));
+		obj.updateWorldMatrix(true, false);
+		const o = obj.worldToLocal(grab.p0.clone());
+		const n = obj.worldToLocal(grab.p0.clone().add(worldDelta));
+		let dx = n.x - o.x;
+		let dy = n.y - o.y;
+		let dz = n.z - o.z;
+		if (editorStore.snapEnabled) {
+			dx = editorStore.snapVal(dx);
+			dy = editorStore.snapVal(dy);
+			dz = editorStore.snapVal(dz);
+		}
+		for (let i = 0; i < this.#edit.bmesh.verts.length; i++) {
+			const w = grab.weights[i];
+			const s = grab.startVerts[i];
+			this.#edit.bmesh.verts[i] = [s[0] + dx * w, s[1] + dy * w, s[2] + dz * w];
+		}
+		this.#applyLivePositions();
+	};
+
+	#onEditGrabUp = () => {
+		window.removeEventListener('pointermove', this.#onEditGrabMove);
+		window.removeEventListener('pointerup', this.#onEditGrabUp);
+		if (this.#edit) this.#edit.grab = null;
+		this.#commitMesh({ coalesce: 'model-grab' });
+	};
+
+	startModelGrab() {
+		if (!this.#modelling() || !this.#coreVerts().size) {
+			editorStore.toast('Select something to move');
+			return;
+		}
+		const rect = this.renderer.domElement.getBoundingClientRect();
+		const fake = {
+			clientX: rect.left + rect.width / 2,
+			clientY: rect.top + rect.height / 2
+		} as PointerEvent;
+		this.#beginGrab(fake, editorStore.editSelectMode === 'face');
+		editorStore.toast('Move — drag, release to confirm');
+	}
+
+	modelExtrude() {
+		if (!this.#ensureFaces('Extrude')) return;
+		docStore.mark(null);
+		const caps = extrudeFaces(this.#edit!.bmesh, [...this.#edit!.faces], 0);
+		this.#edit!.faces = new Set(caps);
+		this.#commitMesh();
+		this.startModelGrab();
+	}
+
+	modelInset(amount = 0.2) {
+		if (!this.#ensureFaces('Inset')) return;
+		docStore.mark(null);
+		insetFaces(this.#edit!.bmesh, [...this.#edit!.faces], amount);
+		this.#commitMesh();
+		editorStore.toast('Inset');
+	}
+
+	modelLoopCut() {
+		if (!this.#edit) return;
+		if (editorStore.editSelectMode !== 'edge' || this.#edit.edges.size !== 1) {
+			editorStore.toast('Select one edge, then loop cut');
+			return;
+		}
+		const [a, b] = parseEdge([...this.#edit.edges][0]);
+		docStore.mark(null);
+		if (!loopCut(this.#edit.bmesh, a, b, 0.5)) {
+			editorStore.toast('Loop cut needs a ring of quads');
+			return;
+		}
+		this.clearModelSelection();
+		this.#commitMesh();
+		editorStore.toast('Loop cut');
+	}
+
+	modelBevel(amount = 0.15) {
+		if (!this.#edit) return;
+		const edges =
+			editorStore.editSelectMode === 'edge'
+				? [...this.#edit.edges].map(parseEdge)
+				: editorStore.editSelectMode === 'face'
+					? [...this.#edit.faces].flatMap((fi) => {
+							const f = this.#edit!.bmesh.faces[fi];
+							const e: [number, number][] = [];
+							for (let i = 0; i < f.length; i++) e.push([f[i], f[(i + 1) % f.length]]);
+							return e;
+						})
+					: [];
+		if (!edges.length) {
+			editorStore.toast('Select edges (or faces) to bevel');
+			return;
+		}
+		docStore.mark(null);
+		bevelEdges(this.#edit.bmesh, edges, amount);
+		this.clearModelSelection();
+		this.#commitMesh();
+		editorStore.toast('Bevel');
+	}
+
+	modelMerge() {
+		if (!this.#edit) return;
+		const verts = [...this.#coreVerts()];
+		if (verts.length < 2) {
+			editorStore.toast('Select at least two vertices to merge');
+			return;
+		}
+		docStore.mark(null);
+		if (!mergeVerts(this.#edit.bmesh, verts)) return;
+		this.clearModelSelection();
+		this.#commitMesh();
+		editorStore.toast('Merged');
+	}
+
+	modelDelete() {
+		if (!this.#edit || !this.hasModelSelection()) {
+			editorStore.toast('Select something to delete');
+			return;
+		}
+		const backup = cloneBMesh(this.#edit.bmesh);
+		docStore.mark(null);
+		let ok = false;
+		if (editorStore.editSelectMode === 'face') ok = deleteFaces(this.#edit.bmesh, [...this.#edit.faces]);
+		else if (editorStore.editSelectMode === 'edge')
+			ok = deleteEdges(this.#edit.bmesh, [...this.#edit.edges].map(parseEdge));
+		else ok = deleteVerts(this.#edit.bmesh, [...this.#edit.verts]);
+		if (!ok) {
+			this.#edit.bmesh = backup;
+			editorStore.toast("Can't delete the last faces");
+			return;
+		}
+		this.clearModelSelection();
+		this.#commitMesh();
+		editorStore.toast('Deleted');
+	}
+
+	#ensureFaces(op: string): boolean {
+		if (!this.#edit) return false;
+		if (editorStore.editSelectMode !== 'face' || !this.#edit.faces.size) {
+			editorStore.toast(`${op} needs a face selection (3)`);
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Push everything a link group shares — shape *and* paint — from `source`
+	 * onto its fellow members, and return how many were changed.
+	 *
+	 * Membership is symmetric, so this runs from whichever copy you happened
+	 * to edit; there is no privileged original. Transform is pointedly not
+	 * included: two instances that couldn't be moved apart would be pointless.
+	 */
+	propagateLinked(source: SceneNode): number {
+		if (!source.dataLink) return 0;
+		const link = source.dataLink;
+		let touched = 0;
+		for (const n of docStore.doc.nodes) {
+			if (n.id === source.id || n.dataLink !== link) continue;
+			if (isPrimitive(source) && isPrimitive(n)) {
+				// Type can drift if a member was converted; re-point it so the
+				// group can't silently split in half.
+				n.type = source.type;
+				n.geometry = copyOf(source.geometry);
+				n.materialId = source.materialId;
+			} else if (isAuthoredMesh(source) && isAuthoredMesh(n)) {
+				n.assetId = source.assetId;
+				n.stats = { ...source.stats };
+				n.materialId = source.materialId;
+			} else if (isImported(source) && isImported(n)) {
+				n.assetId = source.assetId;
+				n.materialOverride = source.materialOverride;
+				n.part = source.part
+					? { index: source.part.index, name: source.part.name, center: { ...source.part.center } }
+					: null;
+			} else {
+				continue;
+			}
+			touched++;
+		}
+		return touched;
+	}
+
+	/**
+	 * Say — at most once every few seconds, so a slider drag doesn't machine-gun
+	 * the toast — that the edit just made reached the rest of the link group.
+	 * The Inspector carries the standing explanation; this is the nudge for
+	 * someone who is dragging a slider and hasn't looked at the panel.
+	 */
+	#lastLinkNoticeAt = 0;
+	noticeLinkedEdit(count: number) {
+		if (count <= 0) return;
+		const now = Date.now();
+		if (now - this.#lastLinkNoticeAt < 4000) return;
+		this.#lastLinkNoticeAt = now;
+		editorStore.toast(`Updated ${count + 1} linked copies — unlink one to edit it on its own`);
+	}
+
+	/** Convenience for UI edit handlers: propagate, then notify. */
+	syncLinked(node: SceneNode) {
+		this.noticeLinkedEdit(this.propagateLinked(node));
+	}
+
+	/**
+	 * Break one object out of its link group. Deliberately a single explicit
+	 * act covering both halves of the link — shape and paint — because a link
+	 * that's half-broken is the confusing state, not a useful one.
+	 */
+	unlinkNode(node: SceneNode) {
+		if (!node.dataLink) {
+			editorStore.toast('This object is already independent');
+			return;
+		}
+		docStore.mark(null);
+		const others = docStore.unlink(node);
+		this.requestSync();
+		editorStore.toast(
+			others > 0
+				? `${node.name} is now independent — the other ${others} ${others === 1 ? 'copy is' : 'copies are'} unaffected`
+				: `${node.name} is now independent`
+		);
 	}
 
 	#refreshSelectionHighlight() {
@@ -705,6 +1598,7 @@ export class SceneEngine {
 			(bh.material as THREE.Material).dispose();
 		});
 		this.selectionHelpers.clear();
+		if (editorStore.isolatedId) return;
 		for (const id of docStore.selectedIds) {
 			const obj = this.threeObjects.get(id);
 			if (!obj) continue;
@@ -749,7 +1643,14 @@ export class SceneEngine {
 			startY = e.clientY;
 		const dom = this.renderer.domElement;
 		const up = (ev: PointerEvent) => {
-			dom.removeEventListener('pointerup', up);
+			// Listen on window, not the canvas: releasing the button outside the
+			// viewport (very easy to do now that shift-drag box-selects) meant
+			// this never fired and never unregistered, so handlers piled up and
+			// all fired together on some later click.
+			window.removeEventListener('pointerup', up);
+			// Both the gizmo and the marquee release on window and register
+			// before this handler does, so by the time we get here they've
+			// already flagged that this pointerup closed a drag, not a click.
 			if (this.gizmoWasDragging) {
 				this.gizmoWasDragging = false;
 				return;
@@ -765,15 +1666,24 @@ export class SceneEngine {
 				if ((o as THREE.Mesh).isMesh && this.#isEffectivelyVisible(o)) meshes.push(o);
 			});
 			const hits = this.raycaster.intersectObjects(meshes, false);
-			const id = hits.length ? this.#nodeIdFor(hits[0].object) : null;
+			let id = hits.length ? this.#nodeIdFor(hits[0].object) : null;
+			if (editorStore.isolatedId) {
+				if (id && id !== editorStore.isolatedId) id = null;
+				if (id) this.setSelection([id]);
+			if (moved <= 4 && this.#edit && !this.#editConsumedClick && !(ev.shiftKey || ev.ctrlKey || ev.metaKey)) {
+					this.clearModelSelection();
+				}
+				this.#editConsumedClick = false;
+				return;
+			}
 			if (id) {
-				if (ev.ctrlKey || ev.metaKey) this.toggleSelection(id);
+				if (ev.shiftKey || ev.ctrlKey || ev.metaKey) this.toggleSelection(id);
 				else this.setSelection([id]);
-			} else if (!(ev.ctrlKey || ev.metaKey)) {
+			} else if (!(ev.shiftKey || ev.ctrlKey || ev.metaKey)) {
 				this.setSelection([]);
 			}
 		};
-		dom.addEventListener('pointerup', up);
+		window.addEventListener('pointerup', up);
 	};
 
 	focusOnSelection = () => {
@@ -823,7 +1733,13 @@ export class SceneEngine {
 		const single = docStore.selectedIds.length === 1 ? docStore.node(docStore.selectedIds[0]) : null;
 		const rows: [string, string][] = [];
 		if (single) {
-			const typeLabel = isGroup(single) ? 'group' : isPrimitive(single) ? GEO_DEFS[single.type].label : 'model';
+			const typeLabel = isGroup(single)
+				? 'group'
+				: isPrimitive(single)
+					? GEO_DEFS[single.type].label
+					: isAuthoredMesh(single)
+						? 'mesh'
+						: 'model';
 			rows.push(['type', typeLabel]);
 			if (isGroup(single) || isImported(single)) rows.push(['meshes', String(meshes.length)]);
 		} else {
@@ -841,6 +1757,10 @@ export class SceneEngine {
 
 	// ---- CRUD ---------------------------------------------------------------
 	addPrimitive(type: PrimitiveType) {
+		if (editorStore.isolatedId) {
+			editorStore.toast('Exit isolation (Esc) to add shapes');
+			return;
+		}
 		docStore.mark(null);
 		const sel = docStore.selectedIds;
 		const soleSelected = sel.length === 1 ? docStore.node(sel[0]) : undefined;
@@ -856,6 +1776,7 @@ export class SceneEngine {
 			type,
 			visible: true,
 			locked: false,
+			dataLink: null,
 			transform: {
 				...defaultTransform(),
 				position: {
@@ -879,6 +1800,10 @@ export class SceneEngine {
 	}
 
 	addGroup() {
+		if (editorStore.isolatedId) {
+			editorStore.toast('Exit isolation (Esc) to add a group');
+			return;
+		}
 		docStore.mark(null);
 		const node: GroupNode = {
 			id: docStore.newId(),
@@ -887,6 +1812,7 @@ export class SceneEngine {
 			kind: 'group',
 			visible: true,
 			locked: false,
+			dataLink: null,
 			transform: defaultTransform()
 		};
 		docStore.doc.nodes.push(node);
@@ -906,6 +1832,10 @@ export class SceneEngine {
 		object: THREE.Object3D,
 		meta: { name: string; format: Asset['format']; source: AssetSource; stats: { meshes: number; triangles: number } }
 	) {
+		if (editorStore.isolatedId) {
+			editorStore.toast('Exit isolation (Esc) to add a model');
+			return;
+		}
 		docStore.mark(null);
 
 		const groundedY = object.position.y;
@@ -932,6 +1862,7 @@ export class SceneEngine {
 			materialOverride: null,
 			visible: true,
 			locked: false,
+			dataLink: null,
 			transform: {
 				position: {
 					x: round3((siblingCount % 4) * 1.4 - 2),
@@ -966,6 +1897,10 @@ export class SceneEngine {
 		parts: ImportPart[],
 		meta: { name: string; format: Asset['format']; source: AssetSource; stats: { meshes: number; triangles: number } }
 	) {
+		if (editorStore.isolatedId) {
+			editorStore.toast('Exit isolation (Esc) to add a model');
+			return;
+		}
 		docStore.mark(null);
 
 		const groundedY = object.position.y;
@@ -990,6 +1925,7 @@ export class SceneEngine {
 			kind: 'group',
 			visible: true,
 			locked: false,
+			dataLink: null,
 			transform: {
 				position: {
 					x: round3((siblingCount % 4) * 1.4 - 2),
@@ -1012,6 +1948,7 @@ export class SceneEngine {
 				materialOverride: null,
 				visible: true,
 				locked: false,
+			dataLink: null,
 				// Pivoting the node at the part's own geometry centre (rather than
 				// identity, i.e. the whole file's shared origin) is what gives it a
 				// sane rotate/scale gizmo — see #buildImportedObject() for the other
@@ -1081,10 +2018,44 @@ export class SceneEngine {
 	}
 
 	deleteSelection() {
-		if (!docStore.selectedIds.length) return;
+		const ids = docStore.selectedIds.filter((id) => !docStore.isLocked(id));
+		if (!ids.length) {
+			if (docStore.selectedIds.length) editorStore.toast('Selection is locked');
+			return;
+		}
 		docStore.mark(null);
-		docStore.remove(docStore.selectedIds);
+		docStore.remove(ids);
 		this.requestSync();
+	}
+
+	selectGroupContents() {
+		const next: string[] = [];
+		for (const id of docStore.selectedIds) {
+			const n = docStore.node(id);
+			if (n && isGroup(n)) {
+				for (const d of docStore.descendants(id)) next.push(d.id);
+			} else {
+				next.push(id);
+			}
+		}
+		if (!next.length) {
+			editorStore.toast('This group is empty');
+			return;
+		}
+		this.setSelection(next);
+	}
+
+	materialUserCount(id: string): number {
+		let n = 0;
+		for (const node of docStore.doc.nodes) {
+			if ((isPrimitive(node) || isAuthoredMesh(node)) && node.materialId === id) n++;
+			else if (isImported(node) && node.materialOverride === id) n++;
+		}
+		return n;
+	}
+
+	#editableRoots() {
+		return docStore.selectionRoots().filter((n) => !docStore.isLocked(n.id));
 	}
 
 	/** Bounding-box width of a live object, used to space duplicates apart. */
@@ -1096,20 +2067,29 @@ export class SceneEngine {
 		return isFinite(s.x) && s.x > 0.01 ? s.x : 0.5;
 	}
 
-	duplicateSelection() {
+	duplicateSelection(linked = false) {
+		if (editorStore.isolatedId) {
+			editorStore.toast('Exit isolation (Esc) to duplicate');
+			return;
+		}
 		if (!docStore.selectedIds.length) return;
 		docStore.mark(null);
 		const snap = editorStore.snapEnabled ? editorStore.snapStep : 0;
-		const newIds = docStore.selectedIds
-			.map((id) => docStore.duplicate(id, (nid) => this.widthOf(nid), snap))
+		// Roots only. Duplicating a group *and* something inside it would clone
+		// that child twice — once via its parent's subtree, once on its own —
+		// which is easy to hit now that "select group contents" exists.
+		const newIds = docStore
+			.selectionRoots()
+			.map((n) => docStore.duplicate(n.id, (nid) => this.widthOf(nid), snap, linked))
 			.filter((id): id is string => !!id);
-		// Synchronous, not requestSync() — setSelection() below (with "Orbit
-		// around selection" on) reads threeObjects.get() for each new id to
-		// recentre the pivot, and requestSync() only runs on the next animation
-		// frame, so the lookup would still be finding nothing.
 		this.syncScene();
 		this.setSelection(newIds);
-		editorStore.toast('Duplicated');
+		const n = newIds.length;
+		editorStore.toast(
+			linked
+				? `Linked ${n === 1 ? 'copy' : 'copies'} — shape and colour stay in sync; move each one freely`
+				: `Copied ${n === 1 ? '1 object' : n + ' objects'} — fully independent`
+		);
 	}
 
 	groupSelection() {
@@ -1142,6 +2122,7 @@ export class SceneEngine {
 			kind: 'group',
 			visible: true,
 			locked: false,
+			dataLink: null,
 			transform: { ...defaultTransform(), position: { x: centroid.x, y: centroid.y, z: centroid.z } }
 		};
 		docStore.doc.nodes.push(groupNode);
@@ -1331,6 +2312,11 @@ export class SceneEngine {
 			editorStore.toast('Select at least two objects');
 			return;
 		}
+		const movable = roots.filter((n) => !docStore.isLocked(n.id));
+		if (!movable.length) {
+			editorStore.toast('Selection is locked');
+			return;
+		}
 		docStore.mark(null);
 		const items = roots.map((n) => ({ n, b: this.worldBoxOf(n) })).filter((x) => x.b);
 		const valOf = (b: THREE.Box3) =>
@@ -1342,7 +2328,9 @@ export class SceneEngine {
 				: mode === 'max'
 					? Math.max(...vals)
 					: vals.reduce((a, b) => a + b, 0) / vals.length;
-		items.forEach((x, i) => this.nudgeWorld(x.n, axis, target - vals[i]));
+		items.forEach((x, i) => {
+			if (!docStore.isLocked(x.n.id)) this.nudgeWorld(x.n, axis, target - vals[i]);
+		});
 		this.requestSync();
 		editorStore.toast('Aligned ' + axis.toUpperCase());
 	}
@@ -1364,7 +2352,9 @@ export class SceneEngine {
 		const first = items[0].v,
 			last = items[items.length - 1].v;
 		const step = (last - first) / (items.length - 1);
-		items.forEach((it, i) => this.nudgeWorld(it.n, axis, first + step * i - it.v));
+		items.forEach((it, i) => {
+			if (!docStore.isLocked(it.n.id)) this.nudgeWorld(it.n, axis, first + step * i - it.v);
+		});
 		this.requestSync();
 		editorStore.toast('Distributed along ' + axis.toUpperCase());
 	}
@@ -1372,9 +2362,9 @@ export class SceneEngine {
 	/** "Ground" is whichever axis Settings nominates as down — Y for a normal
 	 *  scene, but a wall layout may want X or Z instead. */
 	dropToGround() {
-		const roots = docStore.selectionRoots();
+		const roots = this.#editableRoots();
 		if (!roots.length) {
-			editorStore.toast('Nothing selected');
+			editorStore.toast(docStore.selectedIds.length ? 'Selection is locked' : 'Nothing selected');
 			return;
 		}
 		const axis = editorStore.dropAxis;
@@ -1388,7 +2378,7 @@ export class SceneEngine {
 	}
 
 	randomizeSelection() {
-		const roots = docStore.selectionRoots();
+		const roots = this.#editableRoots();
 		if (!roots.length) return;
 		docStore.mark(null);
 		roots.forEach((n) => {
@@ -1404,7 +2394,7 @@ export class SceneEngine {
 	}
 
 	resetTransform(kind: 'position' | 'rotation' | 'scale') {
-		const roots = docStore.selectionRoots();
+		const roots = this.#editableRoots();
 		if (!roots.length) return;
 		docStore.mark(null);
 		roots.forEach((n) => {
@@ -1422,9 +2412,9 @@ export class SceneEngine {
 	 */
 	flipAcross(plane: 'xy' | 'yz' | 'zx') {
 		const normal = PLANE_NORMAL[plane];
-		const roots = docStore.selectionRoots();
+		const roots = this.#editableRoots();
 		if (!roots.length) {
-			editorStore.toast('Nothing selected');
+			editorStore.toast(docStore.selectedIds.length ? 'Selection is locked' : 'Nothing selected');
 			return;
 		}
 		docStore.mark(null);
@@ -1465,7 +2455,7 @@ export class SceneEngine {
 	// own materials, out of scope for this pass), so these narrow with
 	// isPrimitive rather than the broader isMeshNode.
 	copyMaterialFrom(node: SceneNode) {
-		if (!isPrimitive(node)) return;
+		if (!isPrimitive(node) && !isAuthoredMesh(node)) return;
 		const mat = docStore.doc.materials[node.materialId];
 		if (!mat) return;
 		editorStore.materialClipboard = copyOf(mat);
@@ -1477,7 +2467,7 @@ export class SceneEngine {
 			editorStore.toast('Copy a material first');
 			return;
 		}
-		const meshes = docStore.selectionMeshes(true).filter(isPrimitive);
+		const meshes = docStore.selectionMeshes(true).filter((n) => isPrimitive(n) || isAuthoredMesh(n)) as (PrimitiveNode | MeshNode)[];
 		if (!meshes.length) {
 			editorStore.toast('No meshes selected');
 			return;
@@ -1505,7 +2495,7 @@ export class SceneEngine {
 	}
 
 	/** Give a node its own material entry, breaking any sharing link. */
-	unlinkMaterial(node: PrimitiveNode) {
+	unlinkMaterial(node: PrimitiveNode | MeshNode) {
 		const current = docStore.doc.materials[node.materialId];
 		if (!current) return;
 		docStore.mark(null);
@@ -1513,6 +2503,7 @@ export class SceneEngine {
 		docStore.doc.materials[id] = copyOf(current);
 		node.materialId = id;
 		this.requestSync();
+		editorStore.toast('Make unique — this object keeps its colour');
 	}
 
 	/**
@@ -1539,7 +2530,7 @@ export class SceneEngine {
 			users.set(matId, list);
 		};
 		for (const n of docStore.doc.nodes) {
-			if (isPrimitive(n)) add(n.materialId, (id) => (n.materialId = id));
+			if (isPrimitive(n) || isAuthoredMesh(n)) add(n.materialId, (id) => (n.materialId = id));
 			else if (isImported(n) && n.materialOverride) add(n.materialOverride, (id) => (n.materialOverride = id));
 		}
 
@@ -1566,7 +2557,8 @@ export class SceneEngine {
 	sharedMaterialCount(): number {
 		const counts = new Map<string, number>();
 		for (const n of docStore.doc.nodes) {
-			const id = isPrimitive(n) ? n.materialId : isImported(n) ? n.materialOverride : null;
+			const id =
+				isPrimitive(n) || isAuthoredMesh(n) ? n.materialId : isImported(n) ? n.materialOverride : null;
 			if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
 		}
 		let shared = 0;
@@ -1576,7 +2568,7 @@ export class SceneEngine {
 
 	// ---- keyboard nudge -------------------------------------------------------
 	nudgeByKey(e: KeyboardEvent) {
-		const roots = docStore.selectionRoots();
+		const roots = this.#editableRoots();
 		if (!roots.length) return;
 		const map: Record<string, [Axis, number]> = {
 			ArrowLeft: ['x', -1],
@@ -1711,27 +2703,21 @@ export class SceneEngine {
 	#updateGizmoTransform() {
 		const gizmoGroup = this.#gizmoGroup;
 		if (!gizmoGroup) return;
-		if (!docStore.selectedIds.length) {
+		if (editorStore.isolatedId || !docStore.selectedIds.length) {
 			gizmoGroup.visible = false;
 			return;
 		}
-		const roots = docStore.selectionRoots();
-		const c = new THREE.Vector3();
-		let count = 0;
-		for (const nd of roots) {
-			const o = this.threeObjects.get(nd.id);
-			if (o) {
-				o.updateWorldMatrix(true, false);
-				c.add(o.getWorldPosition(new THREE.Vector3()));
-				count++;
-			}
-		}
-		if (!count) {
+		const roots = this.#editableRoots();
+		if (!roots.length) {
 			gizmoGroup.visible = false;
 			return;
 		}
-		c.divideScalar(count);
-		gizmoGroup.position.copy(c);
+		const pivot = this.#selectionPivot(roots);
+		if (!isFinite(pivot.x)) {
+			gizmoGroup.visible = false;
+			return;
+		}
+		gizmoGroup.position.copy(pivot);
 		gizmoGroup.visible = true;
 		const mode = editorStore.gizmoMode;
 		this.#gizmoParts.translate.visible = mode === 'translate';
@@ -1750,7 +2736,24 @@ export class SceneEngine {
 		} else {
 			this.#gizmoParts.scale.quaternion.identity();
 		}
-		gizmoGroup.scale.setScalar(Math.max(0.35, this.camera.position.distanceTo(c) * 0.15));
+		gizmoGroup.scale.setScalar(Math.max(0.35, this.camera.position.distanceTo(pivot) * 0.15));
+	}
+
+	#selectionPivot(roots: SceneNode[]): THREE.Vector3 {
+		const box = new THREE.Box3();
+		let any = false;
+		for (const nd of roots) {
+			const o = this.threeObjects.get(nd.id);
+			if (!o) continue;
+			o.updateWorldMatrix(true, true);
+			const b = new THREE.Box3().setFromObject(o);
+			if (!isFinite(b.min.x)) continue;
+			if (!any) {
+				box.copy(b);
+				any = true;
+			} else box.union(b);
+		}
+		return any ? box.getCenter(new THREE.Vector3()) : new THREE.Vector3(NaN, NaN, NaN);
 	}
 
 	#pointerNDC(e: PointerEvent) {
@@ -1768,14 +2771,32 @@ export class SceneEngine {
 	/** Called from the orbit controls' pointerdown before it commits to an
 	 *  orbit drag; returns true if a gizmo handle was grabbed instead. */
 	gizmoTryGrab = (e: PointerEvent): boolean => {
+		if (editorStore.isolatedId && editorStore.isolationTool === 'model') {
+			if (e.shiftKey) {
+				this.#beginMarquee(e, true);
+				return this.#editPointerDown(e);
+			}
+			return this.#editPointerDown(e);
+		}
+		if (editorStore.isolatedId) return false;
+		if (this.#gizmoDrag) return false;
 		const gizmoGroup = this.#gizmoGroup;
-		if (!gizmoGroup || !gizmoGroup.visible || this.#gizmoDrag) return false;
-		this.raycaster.setFromCamera(this.#pointerNDC(e), this.camera);
-		const hits = this.raycaster.intersectObjects(this.#gizmoHandles[editorStore.gizmoMode], false);
-		if (!hits.length) return false;
-		const h = hits[0].object;
+		if (gizmoGroup?.visible) {
+			this.raycaster.setFromCamera(this.#pointerNDC(e), this.camera);
+			const hits = this.raycaster.intersectObjects(this.#gizmoHandles[editorStore.gizmoMode], false);
+			if (hits.length) return this.#grabGizmo(e, hits[0].object);
+		}
+		if (e.shiftKey) {
+			this.#beginMarquee(e, false);
+			return true;
+		}
+		return false;
+	};
+
+	#grabGizmo(e: PointerEvent, h: THREE.Object3D): boolean {
+		const gizmoGroup = this.#gizmoGroup!;
 		const origin = gizmoGroup.position.clone();
-		const roots = docStore.selectionRoots();
+		const roots = this.#editableRoots();
 		if (!roots.length) return false;
 
 		const targets: GizmoTarget[] = roots.map((nd) => {
@@ -1789,10 +2810,19 @@ export class SceneEngine {
 				startScale: { ...nd.transform.scale }
 			};
 			if (obj) {
-				obj.updateWorldMatrix(true, false);
+				obj.updateWorldMatrix(true, true);
 				t.startWorldPos = obj.getWorldPosition(new THREE.Vector3());
 				t.startWorldQ = obj.getWorldQuaternion(new THREE.Quaternion());
 				t.parentWorldQInv = parent.getWorldQuaternion(new THREE.Quaternion()).invert();
+				// "Each" turns an object about the same thing the gizmo points
+				// at for a single selection — its own visible centre. Using the
+				// object's origin instead would spin an import around whatever
+				// arbitrary point its exporter happened to use, which reads as a
+				// swing rather than a rotation.
+				const ownBox = new THREE.Box3().setFromObject(obj);
+				t.ownCentre = isFinite(ownBox.min.x) && !ownBox.isEmpty()
+					? ownBox.getCenter(new THREE.Vector3())
+					: t.startWorldPos.clone();
 				if (editorStore.gizmoMode === 'scale') {
 					t.localBox = localBounds(obj);
 					t.startLocalQ = obj.quaternion.clone();
@@ -1873,7 +2903,7 @@ export class SceneEngine {
 		window.addEventListener('pointermove', this.#onGizmoMove);
 		window.addEventListener('pointerup', this.#onGizmoUp);
 		return true;
-	};
+	}
 
 	#onGizmoMove = (e: PointerEvent) => {
 		const drag = this.#gizmoDrag;
@@ -1905,18 +2935,23 @@ export class SceneEngine {
 				if (s > 0) angle = Math.round(angle / s) * s;
 			}
 			const dq = new THREE.Quaternion().setFromAxisAngle(drag.rotAxis!, angle);
+			const each = editorStore.transformStyle === 'each';
 			drag.targets.forEach((t) => {
-				if (!t.startWorldQ) return;
+				if (!t.startWorldQ || !t.startWorldPos) return;
 				const worldQ = dq.clone().multiply(t.startWorldQ);
 				const localQ = t.parentWorldQInv!.clone().multiply(worldQ);
 				const eul = new THREE.Euler().setFromQuaternion(localQ, 'XYZ');
 				t.node.transform.rotation = { x: round3(R2D(eul.x)), y: round3(R2D(eul.y)), z: round3(R2D(eul.z)) };
-				if (drag.targets.length > 1) {
-					const rel = t.startWorldPos!.clone().sub(drag.origin).applyQuaternion(dq).add(drag.origin);
-					t.parent.updateWorldMatrix(true, false);
-					const local = t.parent.worldToLocal(rel);
-					t.node.transform.position = { x: round3(local.x), y: round3(local.y), z: round3(local.z) };
-				}
+				// Together turns everything around the shared pivot; Each turns
+				// every object around its own centre. Both still have to move
+				// the object, because rotating about any point other than its
+				// origin displaces it — "in place" is a statement about the
+				// pivot, not about the position staying untouched.
+				const pivot = each ? t.ownCentre ?? t.startWorldPos : drag.origin;
+				const rel = t.startWorldPos.clone().sub(pivot).applyQuaternion(dq).add(pivot);
+				t.parent.updateWorldMatrix(true, false);
+				const local = t.parent.worldToLocal(rel);
+				t.node.transform.position = { x: round3(local.x), y: round3(local.y), z: round3(local.z) };
 			});
 		} else {
 			const cur = p.clone().sub(drag.origin);
@@ -1925,57 +2960,55 @@ export class SceneEngine {
 			if (!isFinite(f)) return;
 			f = Math.max(0.02, Math.min(40, f));
 			if (editorStore.snapEnabled) f = Math.round(f * 10) / 10 || 0.1;
-			// Shift pins the edge opposite the handle in place instead of scaling
-			// from the object's centre — held live, so toggling it mid-drag
-			// switches modes without restarting the drag.
-			const anchorFarEdge = drag.scaleAxis !== 'uniform' && e.shiftKey;
+			const cmd = e.metaKey || e.ctrlKey;
+			const pinEdge = drag.scaleAxis !== 'uniform' && e.shiftKey;
+			const pinMax = pinEdge && cmd;
+			const each = editorStore.transformStyle === 'each';
+			const scaleAxes: Axis[] =
+				drag.scaleAxis === 'uniform'
+					? ['x', 'y', 'z']
+					: editorStore.linkedScaleAxes(drag.scaleAxis as Axis);
 			drag.targets.forEach((t) => {
-				// With more than one object selected, "scale the selection" should
-				// also spread the objects apart from the shared pivot (drag.origin),
-				// same as translate/rotate already do — otherwise everything just
-				// grows or shrinks in place and overlaps. For a single selection
-				// this target's own pivot IS drag.origin, so the offset is zero and
-				// this is a no-op.
 				let groupPos = t.start;
-				if (t.startWorldPos) {
-					const offset = t.startWorldPos.clone().sub(drag.origin);
+				// Anchoring an edge and orbiting the group pivot are two different
+				// answers to "where does this object end up", and adding them
+				// together lands on neither. When an edge is pinned, that wins:
+				// the object stays put except for the shift that keeps its edge
+				// in place. (Without this, shift-scaling anything whose origin
+				// isn't its bounding-box centre — a group, an import — visibly
+				// slid the "anchored" edge.)
+				const pivot = each ? t.ownCentre ?? t.startWorldPos : drag.origin;
+				if (!pinEdge && t.startWorldPos && pivot) {
+					const offset = t.startWorldPos.clone().sub(pivot);
 					const newOffset =
 						drag.scaleAxis === 'uniform'
 							? offset.clone().multiplyScalar(f)
 							: offset.clone().addScaledVector(drag.axisDir!, offset.dot(drag.axisDir!) * (f - 1));
 					t.parent.updateWorldMatrix(true, false);
-					const local = t.parent.worldToLocal(drag.origin.clone().add(newOffset));
+					const local = t.parent.worldToLocal(pivot.clone().add(newOffset));
 					groupPos = { x: local.x, y: local.y, z: local.z };
 				}
-				if (drag.scaleAxis === 'uniform') {
-					t.node.transform.scale.x = round3(t.startScale.x * f);
-					t.node.transform.scale.y = round3(t.startScale.y * f);
-					t.node.transform.scale.z = round3(t.startScale.z * f);
+				for (const axis of scaleAxes) {
+					t.node.transform.scale[axis] = round3(t.startScale[axis] * f);
+				}
+				const pinAxis = drag.scaleAxis === 'uniform' ? null : (drag.scaleAxis as Axis);
+				const edgeLocal =
+					pinEdge && pinAxis && t.localBox
+						? pinMax
+							? t.localBox.max[pinAxis]
+							: t.localBox.min[pinAxis]
+						: undefined;
+				if (pinAxis && edgeLocal !== undefined && isFinite(edgeLocal)) {
+					const shift = new THREE.Vector3();
+					shift[pinAxis] = edgeLocal * t.startScale[pinAxis] * (1 - f);
+					if (t.startLocalQ) shift.applyQuaternion(t.startLocalQ);
+					t.node.transform.position.x = round3(groupPos.x + shift.x);
+					t.node.transform.position.y = round3(groupPos.y + shift.y);
+					t.node.transform.position.z = round3(groupPos.z + shift.z);
+				} else {
 					t.node.transform.position.x = round3(groupPos.x);
 					t.node.transform.position.y = round3(groupPos.y);
 					t.node.transform.position.z = round3(groupPos.z);
-				} else {
-					const axis = drag.scaleAxis as Axis;
-					t.node.transform.scale[axis] = round3(t.startScale[axis] * f);
-					const minLocal = t.localBox?.min[axis];
-					if (anchorFarEdge && minLocal !== undefined && isFinite(minLocal)) {
-						// The handle always sits on the axis's positive side, so the
-						// far edge that stays put is the local minimum. Shifting the
-						// origin by how much *it* would otherwise have moved (in real,
-						// scale-inclusive units — localBox is unscaled geometry space)
-						// keeps it fixed in world space while the handle-side edge does
-						// the scaling.
-						const shift = new THREE.Vector3();
-						shift[axis] = minLocal * t.startScale[axis] * (1 - f);
-						if (t.startLocalQ) shift.applyQuaternion(t.startLocalQ);
-						t.node.transform.position.x = round3(groupPos.x + shift.x);
-						t.node.transform.position.y = round3(groupPos.y + shift.y);
-						t.node.transform.position.z = round3(groupPos.z + shift.z);
-					} else {
-						t.node.transform.position.x = round3(groupPos.x);
-						t.node.transform.position.y = round3(groupPos.y);
-						t.node.transform.position.z = round3(groupPos.z);
-					}
 				}
 			});
 		}
@@ -1992,4 +3025,182 @@ export class SceneEngine {
 			this.gizmoWasDragging = false;
 		}, 0);
 	};
+
+	#marqueeStart: { x0: number; y0: number; model: boolean } | null = null;
+
+	#beginMarquee(e: PointerEvent, model: boolean) {
+		const rect = this.renderer.domElement.getBoundingClientRect();
+		this.#marqueeStart = { x0: e.clientX, y0: e.clientY, model };
+		editorStore.marquee = { x: e.clientX - rect.left, y: e.clientY - rect.top, w: 0, h: 0 };
+		window.addEventListener('pointermove', this.#onMarqueeMove);
+		window.addEventListener('pointerup', this.#onMarqueeUp);
+	}
+
+	#onMarqueeMove = (e: PointerEvent) => {
+		const start = this.#marqueeStart;
+		if (!start) return;
+		const rect = this.renderer.domElement.getBoundingClientRect();
+		const x = Math.min(start.x0, e.clientX) - rect.left;
+		const y = Math.min(start.y0, e.clientY) - rect.top;
+		editorStore.marquee = {
+			x,
+			y,
+			w: Math.abs(e.clientX - start.x0),
+			h: Math.abs(e.clientY - start.y0)
+		};
+	};
+
+	#onMarqueeUp = () => {
+		window.removeEventListener('pointermove', this.#onMarqueeMove);
+		window.removeEventListener('pointerup', this.#onMarqueeUp);
+		const start = this.#marqueeStart;
+		const box = editorStore.marquee;
+		this.#marqueeStart = null;
+		editorStore.marquee = null;
+		if (!start || !box) return;
+		if (box.w < 5 && box.h < 5) return;
+		// The click-to-select handler also releases on window and registers
+		// after this one, so flagging here is seen by it on this same event.
+		// It self-clears on the next task, so it can't leak into a later click.
+		this.gizmoWasDragging = true;
+		if (this.#edit) this.#edit.pick = null;
+		if (start.model) this.#marqueeSelectModel(box);
+		else this.#marqueeSelectObjects(box);
+		setTimeout(() => {
+			this.gizmoWasDragging = false;
+		}, 0);
+	};
+
+	/**
+	 * True when any of a capped, evenly-spread sample of `obj`'s surface
+	 * vertices projects inside the marquee. Capped because a dense import has
+	 * hundreds of thousands of vertices and box-select has to stay interactive;
+	 * spread by stride rather than taking the first N so the sample covers the
+	 * whole model instead of one corner of it.
+	 */
+	#sampleInBox(obj: THREE.Object3D, inBox: (x: number, y: number) => boolean): boolean {
+		const rect = this.renderer.domElement.getBoundingClientRect();
+		const v = new THREE.Vector3();
+		const BUDGET = 240;
+		let hit = false;
+		obj.traverse((o) => {
+			if (hit) return;
+			const mesh = o as THREE.Mesh;
+			const pos = mesh.isMesh ? (mesh.geometry?.getAttribute('position') as THREE.BufferAttribute) : null;
+			if (!pos || !pos.count) return;
+			const stride = Math.max(1, Math.floor(pos.count / BUDGET));
+			for (let i = 0; i < pos.count; i += stride) {
+				v.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+				const s = worldToScreen(v, this.camera, rect.width, rect.height);
+				if (s.z <= 1 && inBox(s.x, s.y)) {
+					hit = true;
+					return;
+				}
+			}
+		});
+		return hit;
+	}
+
+	#rectOverlap(a: { x: number; y: number; w: number; h: number }, bx: number, by: number, bw: number, bh: number) {
+		return a.x < bx + bw && a.x + a.w > bx && a.y < by + bh && a.y + a.h > by;
+	}
+
+	#marqueeSelectObjects(box: { x: number; y: number; w: number; h: number }) {
+		const rect = this.renderer.domElement.getBoundingClientRect();
+		const ids: string[] = [];
+		const corner = new THREE.Vector3();
+		const inBox = (sx: number, sy: number) =>
+			sx >= box.x && sx <= box.x + box.w && sy >= box.y && sy <= box.y + box.h;
+		for (const [id, obj] of this.threeObjects) {
+			const node = docStore.node(id);
+			if (!node || isGroup(node) || docStore.isLocked(id) || !node.visible) continue;
+			obj.updateWorldMatrix(true, true);
+			const b = new THREE.Box3().setFromObject(obj);
+			if (!isFinite(b.min.x)) continue;
+
+			// Cheap reject first: if the box doesn't even reach the object's
+			// screen-space bounds, it can't have caught any of it.
+			let minX = Infinity,
+				minY = Infinity,
+				maxX = -Infinity,
+				maxY = -Infinity,
+				any = false;
+			for (let i = 0; i < 8; i++) {
+				corner.set(i & 1 ? b.max.x : b.min.x, i & 2 ? b.max.y : b.min.y, i & 4 ? b.max.z : b.min.z);
+				const s = worldToScreen(corner, this.camera, rect.width, rect.height);
+				if (s.z > 1) continue;
+				any = true;
+				minX = Math.min(minX, s.x);
+				minY = Math.min(minY, s.y);
+				maxX = Math.max(maxX, s.x);
+				maxY = Math.max(maxY, s.y);
+			}
+			if (!any || !this.#rectOverlap(box, minX, minY, maxX - minX, maxY - minY)) continue;
+
+			// Then confirm against actual surface points. A bounding box is a
+			// bad stand-in for a long diagonal or an L-shaped model — testing it
+			// alone selected things nowhere near the box the user drew.
+			if (this.#sampleInBox(obj, inBox)) ids.push(id);
+		}
+		if (!ids.length) return;
+		this.setSelection([...new Set([...docStore.selectedIds, ...ids])]);
+	}
+
+	#marqueeSelectModel(box: { x: number; y: number; w: number; h: number }) {
+		if (!this.#edit) return;
+		const node = editorStore.isolatedId ? docStore.node(editorStore.isolatedId) : null;
+		if (!node) return;
+		const obj = this.threeObjects.get(node.id);
+		if (!obj) return;
+		obj.updateWorldMatrix(true, false);
+		const rect = this.renderer.domElement.getBoundingClientRect();
+		const mode = editorStore.editSelectMode;
+		const inBox = (sx: number, sy: number) =>
+			sx >= box.x && sx <= box.x + box.w && sy >= box.y && sy <= box.y + box.h;
+		if (mode === 'vertex') {
+			for (let i = 0; i < this.#edit.bmesh.verts.length; i++) {
+				const v = this.#edit.bmesh.verts[i];
+				const s = worldToScreen(
+					new THREE.Vector3(v[0], v[1], v[2]).applyMatrix4(obj.matrixWorld),
+					this.camera,
+					rect.width,
+					rect.height
+				);
+				if (s.z <= 1 && inBox(s.x, s.y)) this.#edit.verts.add(i);
+			}
+		} else if (mode === 'edge') {
+			for (const [a, b] of edgesOf(this.#edit.bmesh)) {
+				const va = this.#edit.bmesh.verts[a];
+				const vb = this.#edit.bmesh.verts[b];
+				const sa = worldToScreen(
+					new THREE.Vector3(va[0], va[1], va[2]).applyMatrix4(obj.matrixWorld),
+					this.camera,
+					rect.width,
+					rect.height
+				);
+				const sb = worldToScreen(
+					new THREE.Vector3(vb[0], vb[1], vb[2]).applyMatrix4(obj.matrixWorld),
+					this.camera,
+					rect.width,
+					rect.height
+				);
+				if ((sa.z <= 1 && inBox(sa.x, sa.y)) || (sb.z <= 1 && inBox(sb.x, sb.y))) {
+					this.#edit.edges.add(edgeKey(a, b));
+				}
+			}
+		} else {
+			this.#edit.bmesh.faces.forEach((f, i) => {
+				const c = new THREE.Vector3();
+				for (const vi of f) {
+					const v = this.#edit!.bmesh.verts[vi];
+					c.add(new THREE.Vector3(v[0], v[1], v[2]));
+				}
+				if (!f.length) return;
+				c.multiplyScalar(1 / f.length).applyMatrix4(obj.matrixWorld);
+				const s = worldToScreen(c, this.camera, rect.width, rect.height);
+				if (s.z <= 1 && inBox(s.x, s.y)) this.#edit!.faces.add(i);
+			});
+		}
+		this.#paintEditOverlay();
+	}
 }

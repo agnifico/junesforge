@@ -458,7 +458,9 @@ export const board = {
    `kind` drives the tag: concept work is always labelled as such.
    Visuals: `image` wins; otherwise `preview` renders the live page
    as a thumbnail; with neither, a labelled slot holds the space.
-   Drop screenshots into /static/images/work/ and set `image`. */
+   Drop screenshots into /static/images/work/ and set `image`.
+   `hidden: true` keeps an item out of the page (and out of the
+   prerender crawl) without deleting it. */
 export const work = {
 	heading: 'Work',
 	lede:
@@ -470,6 +472,7 @@ export const work = {
 			type: 'Website and booking flow',
 			brief: 'A neighbourhood clinic losing patients to phone tag and a booking form nobody finishes.',
 			did: 'Brand, a five-section site, and a booking flow that goes from treatment to confirmed slot in four taps.',
+			hidden: true, // off for now: the prerender can't resolve /concepts/*/
 			links: [{ label: 'Open the prototype', href: '/concepts/halden/' }],
 			preview: '/concepts/halden/',
 			image: null,
@@ -481,6 +484,7 @@ export const work = {
 			type: 'Web app · onboarding and dashboard',
 			brief: 'A cloud kitchen running stock on a notebook and a WhatsApp group.',
 			did: 'Onboarding that builds the kitchen as you answer, then a dashboard for orders, stock alerts and the morning prep list.',
+			hidden: true, // off for now: the prerender can't resolve /concepts/*/
 			links: [{ label: 'Open the prototype', href: '/concepts/mise/' }],
 			preview: '/concepts/mise/#dashboard',
 			image: null,

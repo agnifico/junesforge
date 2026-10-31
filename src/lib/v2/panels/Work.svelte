@@ -3,6 +3,7 @@
 	import LivePreview from '../LivePreview.svelte';
 
 	const external = (href) => /^https?:/.test(href);
+	const items = c.items.filter((it) => !it.hidden);
 </script>
 
 <div class="jf-s">
@@ -16,7 +17,7 @@
 		</div>
 
 		<div class="grid">
-			{#each c.items as it}
+			{#each items as it}
 				<article class="card" class:wide={it.wide} class:strip={it.strip}>
 					<div class="visual">
 						{#if it.strip}

@@ -729,6 +729,7 @@
 		padding: 0;
 		font-family: var(--font-body);
 		-webkit-font-smoothing: antialiased;
+		-moz-osx-font-smoothing: grayscale;
 	}
 
 	:global(body),

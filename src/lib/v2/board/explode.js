@@ -1,0 +1,412 @@
+/* =============================================================
+   EXPLODED VIEW — the home screen's circuit taken apart where it
+   stands, as a line drawing (after the Technics SL-1200 poster).
+   Every part lifts straight up off the board, each to its own
+   height, with dashed lines dropping to the outline of where it
+   sat; the traces stay on the ground as a plan. Same model
+   (layout.js) and projection (draw.js) as the board, so the one
+   can turn into the other. `p` runs from 0 (every part on the
+   board) to 1 (fully apart).
+   ============================================================= */
+
+import { project } from './draw.js';
+
+// How high each part rises when fully apart, by ring, in board units.
+// Uneven on purpose: no two neighbours float at the same height.
+export const LIFT = [9, 18, 14, 11, 4, 7];
+const CAP_LIFT = 4.5; // the processor's capacitors, under it
+
+const BG = '#0e0e0e';
+const LINE = [244, 244, 241];
+const INK = 'rgba(4, 24, 15, 0.85)'; // lettering on the lit die
+
+/* Line weights, heaviest first: a part's top outline, its sides, the
+   chips on it, fine detail (pins, slots, module chips), and the plan
+   on the ground. Each with how strongly it shows. */
+const EDGE = [1.6, 0.95];
+const SIDE = [1, 0.7];
+const CHIP = [0.8, 0.55];
+const FINE = [0.5, 0.42];
+const PLAN = [0.6, 0.2];
+
+const A = [0, 0];
+const O = [0, 0];
+const U = [0, 0];
+const N = [0, 0];
+const LO = [[0, 0], [0, 0], [0, 0], [0, 0]];
+const HI = [[0, 0], [0, 0], [0, 0], [0, 0]];
+const SIDES = [[0, -1], [1, 0], [0, 1], [-1, 0]]; // outward normals: N E S W
+
+/* The corners of everything at its full lift, for fitting the
+   drawing to a box: [x, y, z] in board units. */
+export function extents(m) {
+	const pts = [];
+	for (const p of m.parts) {
+		const top = LIFT[p.ring] + p.h + (p.kind === 'memory' ? p.rise : 0);
+		for (const x of [p.x0 - 1, p.x1 + 1]) {
+			for (const z of [p.z0 - 1, p.z1 + 1]) pts.push([x, 0, z], [x, top, z]);
+		}
+	}
+	for (const t of m.antennas) pts.push([t.pts[t.pts.length - 2], 0, t.pts[t.pts.length - 1]]);
+	return pts;
+}
+
+/* s = {
+     p       0 on the board → 1 fully apart
+     guides  the dashed drops and the label leaders, 0–1
+     mark    { name, maker, part } lettered on the processor's die
+     font, em ([r, g, b]), dpr
+     bg      the ground the faces are filled with, so what is behind
+             a part is hidden (the page's own, by default)
+   }
+   Returns where each part's label goes, by ring: the end of a
+   leader rising from the top of the part. */
+export function drawExploded(ctx, v, m, s) {
+	ctx.lineJoin = 'round';
+	ctx.lineCap = 'round';
+	plan(ctx, v, m, s);
+
+	const items = [];
+	for (const p of m.parts) items.push({ d: depth(v, p.x, p.z), p });
+	for (const c of m.caps) items.push({ d: depth(v, (c.x0 + c.x1) / 2, (c.z0 + c.z1) / 2), c });
+	items.sort((a, b) => a.d - b.d);
+
+	const tops = [];
+	for (const it of items) {
+		if (it.c) {
+			const y = CAP_LIFT * s.p;
+			drops(ctx, v, it.c.x0, it.c.z0, it.c.x1, it.c.z1, y, s);
+			solid(ctx, v, it.c.x0, it.c.z0, it.c.x1, it.c.z1, y, y + it.c.h, CHIP, FINE, s.bg);
+			continue;
+		}
+		const p = it.p;
+		const y = LIFT[p.ring] * s.p;
+		drops(ctx, v, p.x0, p.z0, p.x1, p.z1, y, s);
+		part(ctx, v, m, p, y, s);
+		tops[p.ring] = top(v, p, y + p.h + (p.kind === 'memory' ? p.rise : 0));
+	}
+
+	const anchors = [];
+	for (const p of m.parts) {
+		const at = tops[p.ring];
+		anchors.push({ ring: p.ring, ...leader(ctx, at, s) });
+	}
+	return anchors;
+}
+
+/* ---- the ground ---------------------------------------------- */
+
+// The traces and the outline of every part's seat, flat on the board.
+function plan(ctx, v, m, s) {
+	ctx.beginPath();
+	for (const L of m.lanes) poly(ctx, v, L.pts, 0);
+	for (const t of m.antennas) poly(ctx, v, t.pts, 0);
+	stroke(ctx, PLAN);
+
+	ctx.fillStyle = rgba(LINE, 0.3);
+	for (const L of m.lanes) {
+		const n = L.pts.length;
+		project(v, L.pts[0], 0, L.pts[1], 1, A);
+		ctx.fillRect(A[0] - 0.8, A[1] - 0.8, 1.6, 1.6);
+		project(v, L.pts[n - 2], 0, L.pts[n - 1], 1, A);
+		ctx.fillRect(A[0] - 0.8, A[1] - 0.8, 1.6, 1.6);
+	}
+
+	if (s.p < 0.02) return;
+	ctx.save();
+	ctx.setLineDash([2, 3]);
+	ctx.beginPath();
+	for (const p of m.parts) rect(ctx, v, p.x0, p.z0, p.x1, p.z1, 0);
+	for (const c of m.caps) rect(ctx, v, c.x0, c.z0, c.x1, c.z1, 0);
+	ctx.strokeStyle = rgba(LINE, 0.32 * s.guides);
+	ctx.lineWidth = PLAN[0];
+	ctx.stroke();
+	ctx.restore();
+}
+
+// Dashed lines down each corner, from a part to where it sat.
+function drops(ctx, v, x0, z0, x1, z1, y, s) {
+	if (y < 0.4 || s.guides <= 0) return;
+	ctx.save();
+	ctx.setLineDash([3, 4]);
+	ctx.beginPath();
+	for (const [x, z] of [[x0, z0], [x1, z0], [x1, z1], [x0, z1]]) {
+		project(v, x, 0, z, 1, A);
+		ctx.moveTo(A[0], A[1]);
+		project(v, x, y, z, 1, A);
+		ctx.lineTo(A[0], A[1]);
+	}
+	ctx.strokeStyle = rgba(LINE, 0.3 * s.guides);
+	ctx.lineWidth = FINE[0];
+	ctx.stroke();
+	ctx.restore();
+}
+
+/* ---- the parts ----------------------------------------------- */
+
+function part(ctx, v, m, p, y, s) {
+	if (p.kind === 'core' || p.kind === 'ctrl') pins(ctx, v, p, y);
+	solid(ctx, v, p.x0, p.z0, p.x1, p.z1, y, y + p.h, EDGE, SIDE, s.bg);
+	const top = y + p.h;
+
+	if (p.kind === 'memory') {
+		// the modules stand in their slots, nearest drawn last
+		const order = p.cells.slice().sort((a, b) => {
+			const ca = m.cells[a];
+			const cb = m.cells[b];
+			return depth(v, ca.cx, ca.cz) - depth(v, cb.cx, cb.cz);
+		});
+		for (const i of order) {
+			const c = m.cells[i];
+			solid(ctx, v, c.x0, c.z0, c.x1, c.z1, top, top + p.rise, CHIP, FINE, s.bg);
+			module(ctx, v, c, top, top + p.rise);
+		}
+		return;
+	}
+
+	ctx.beginPath();
+	circle(ctx, v, p.x0 + 1.1, top, p.z0 + 1.1, 0.4); // pin-one mark
+	stroke(ctx, FINE);
+
+	const lid = top + p.rise;
+	if (p.kind === 'core') {
+		for (const i of p.cells) die(ctx, v, m.cells[i], lid, s);
+		return;
+	}
+	ctx.beginPath();
+	for (const i of p.cells) {
+		const c = m.cells[i];
+		rect(ctx, v, c.x0, c.z0, c.x1, c.z1, lid);
+	}
+	stroke(ctx, CHIP);
+
+	ctx.beginPath();
+	for (const i of p.cells) {
+		const c = m.cells[i];
+		if (p.kind === 'ports') {
+			// a slot with its contact tongue
+			rect(ctx, v, c.x0 + 0.4, c.z0 + 0.9, c.x1 - 0.4, c.z1 - 0.9, lid);
+			const mx = (c.x0 + c.x1) / 2;
+			line(ctx, v, mx, lid, c.z0 + 1.6, mx, lid, c.z1 - 1.6);
+		} else if (p.kind === 'radio') {
+			// a shield can: vent slots across it
+			for (let k = 1; k < 4; k++) {
+				const z = c.z0 + ((c.z1 - c.z0) * k) / 4;
+				line(ctx, v, c.x0 + 0.35, lid, z, c.x1 - 0.35, lid, z);
+			}
+		} else {
+			// a package's own pin-one notch
+			circle(ctx, v, c.x0 + 0.45, lid, c.z0 + 0.45, 0.16);
+		}
+	}
+	stroke(ctx, FINE);
+}
+
+// Pins along all four sides, as fine ticks.
+function pins(ctx, v, p, y) {
+	const step = 1.3;
+	const out = 0.9;
+	const yy = y + 0.12;
+	ctx.beginPath();
+	for (let x = p.x0 + 1.2; x <= p.x1 - 1.2 + 1e-6; x += step) {
+		line(ctx, v, x, yy, p.z0 - out, x, yy, p.z0);
+		line(ctx, v, x, yy, p.z1, x, yy, p.z1 + out);
+	}
+	for (let z = p.z0 + 1.2; z <= p.z1 - 1.2 + 1e-6; z += step) {
+		line(ctx, v, p.x0 - out, yy, z, p.x0, yy, z);
+		line(ctx, v, p.x1, yy, z, p.x1 + out, yy, z);
+	}
+	stroke(ctx, FINE);
+}
+
+// On the face of a memory module you can see: three chips, fine.
+function module(ctx, v, c, y0, y1) {
+	if (Math.abs(v.sa) < 0.08) return;
+	const x = v.sa < 0 ? c.x0 : c.x1;
+	const span = c.z1 - c.z0 - 1.8;
+	ctx.beginPath();
+	for (let j = 0; j < 3; j++) {
+		const za = c.z0 + 0.9 + (j * span) / 3 + 0.25;
+		const zb = za + span / 3 - 0.5;
+		const ya = y0 + 0.75;
+		const yb = y1 - 0.45;
+		project(v, x, ya, za, 1, A);
+		ctx.moveTo(A[0], A[1]);
+		project(v, x, ya, zb, 1, A);
+		ctx.lineTo(A[0], A[1]);
+		project(v, x, yb, zb, 1, A);
+		ctx.lineTo(A[0], A[1]);
+		project(v, x, yb, za, 1, A);
+		ctx.lineTo(A[0], A[1]);
+		ctx.closePath();
+	}
+	stroke(ctx, FINE);
+}
+
+/* The die: the only colour in the drawing, lit and lettered as it
+   is on the home screen. */
+function die(ctx, v, c, y, s) {
+	ctx.beginPath();
+	rect(ctx, v, c.x0 - 1.1, c.z0 - 1.1, c.x1 + 1.1, c.z1 + 1.1, y);
+	stroke(ctx, FINE);
+
+	ctx.beginPath();
+	rect(ctx, v, c.x0, c.z0, c.x1, c.z1, y);
+	ctx.save();
+	ctx.shadowColor = rgba(s.em, 0.55);
+	ctx.shadowBlur = 26 * s.dpr;
+	ctx.fillStyle = rgba(s.em, 0.92);
+	ctx.fill();
+	ctx.restore();
+
+	if (!s.mark) return;
+	project(v, c.cx, y, c.cz, 1, O);
+	project(v, c.cx + 1, y, c.cz, 1, U);
+	project(v, c.cx, y, c.cz + 1, 1, N);
+	const ux = U[0] - O[0];
+	const uy = U[1] - O[1];
+	const nx = N[0] - O[0];
+	const ny = N[1] - O[1];
+	const room = (c.x1 - c.x0) * 0.82;
+	const text = (t, weight, size, at) => {
+		ctx.font = `${weight} 100px ${s.font}`;
+		const fit = Math.min(size, (room * 100) / Math.max(1, ctx.measureText(t).width));
+		const k = (fit / 100) * s.dpr;
+		ctx.setTransform(ux * k, uy * k, nx * k, ny * k, (O[0] + nx * at) * s.dpr, (O[1] + ny * at) * s.dpr);
+		ctx.fillText(t, 0, 0);
+	};
+	ctx.save();
+	ctx.fillStyle = INK;
+	ctx.textAlign = 'center';
+	ctx.textBaseline = 'middle';
+	if (s.mark.maker) text(s.mark.maker.toUpperCase(), 600, 0.7, -3.1);
+	text(s.mark.name.toUpperCase(), 800, 1.9, -0.2);
+	if (s.mark.part) text(s.mark.part, 600, 0.65, 2.9);
+	ctx.restore();
+}
+
+/* ---- labels -------------------------------------------------- */
+
+// The highest point of a part's top on screen: where its leader starts.
+function top(v, p, y) {
+	let best = null;
+	for (const [x, z] of [[p.x0, p.z0], [p.x1, p.z0], [p.x1, p.z1], [p.x0, p.z1]]) {
+		project(v, x, y, z, 1, A);
+		if (!best || A[1] < best[1]) best = [A[0], A[1]];
+	}
+	return best;
+}
+
+// A leader up from the part and a short tick to the right, where
+// the label hangs; returns where the label starts.
+function leader(ctx, at, s) {
+	const rise = 26;
+	const x = at[0];
+	const y = at[1] - rise;
+	if (s.guides > 0) {
+		ctx.beginPath();
+		ctx.moveTo(at[0], at[1] - 3);
+		ctx.lineTo(x, y);
+		ctx.lineTo(x + 10, y);
+		ctx.strokeStyle = rgba(LINE, 0.45 * s.guides);
+		ctx.lineWidth = FINE[0];
+		ctx.stroke();
+		ctx.beginPath();
+		ctx.arc(at[0], at[1], 1.6, 0, Math.PI * 2);
+		ctx.fillStyle = rgba(s.em, s.guides);
+		ctx.fill();
+	}
+	return { x: x + 14, y };
+}
+
+/* ---- shapes -------------------------------------------------- */
+
+// Larger is nearer the viewer.
+function depth(v, x, z) {
+	return (x - v.fx) * v.sa + (z - v.fz) * v.ca;
+}
+
+/* A box in line art: the sides that face you, then the top, each
+   filled with the ground so whatever sits behind it is hidden. The
+   top is drawn in `topW`, the sides in `sideW` ([width, alpha]). */
+function solid(ctx, v, x0, z0, x1, z1, y0, y1, topW, sideW, bg = BG) {
+	const xs = [x0, x1, x1, x0];
+	const zs = [z0, z0, z1, z1];
+	for (let i = 0; i < 4; i++) {
+		project(v, xs[i], y0, zs[i], 1, LO[i]);
+		project(v, xs[i], y1, zs[i], 1, HI[i]);
+	}
+	ctx.fillStyle = bg;
+	if (y1 - y0 > 0.001) {
+		for (let i = 0; i < 4; i++) {
+			if (SIDES[i][0] * v.sa + SIDES[i][1] * v.ca <= 0.001) continue;
+			const j = (i + 1) % 4;
+			quad(ctx, LO[i], LO[j], HI[j], HI[i]);
+			ctx.fill();
+			stroke(ctx, sideW);
+		}
+	}
+	quad(ctx, HI[0], HI[1], HI[2], HI[3]);
+	ctx.fill();
+	stroke(ctx, topW);
+}
+
+function stroke(ctx, w) {
+	ctx.strokeStyle = rgba(LINE, w[1]);
+	ctx.lineWidth = w[0];
+	ctx.stroke();
+}
+
+function quad(ctx, a, b, c, d) {
+	ctx.beginPath();
+	ctx.moveTo(a[0], a[1]);
+	ctx.lineTo(b[0], b[1]);
+	ctx.lineTo(c[0], c[1]);
+	ctx.lineTo(d[0], d[1]);
+	ctx.closePath();
+}
+
+// A flat rectangle at height y, added to the current path.
+function rect(ctx, v, x0, z0, x1, z1, y) {
+	project(v, x0, y, z0, 1, A);
+	ctx.moveTo(A[0], A[1]);
+	project(v, x1, y, z0, 1, A);
+	ctx.lineTo(A[0], A[1]);
+	project(v, x1, y, z1, 1, A);
+	ctx.lineTo(A[0], A[1]);
+	project(v, x0, y, z1, 1, A);
+	ctx.lineTo(A[0], A[1]);
+	ctx.closePath();
+}
+
+// A straight line, added to the current path.
+function line(ctx, v, xa, ya, za, xb, yb, zb) {
+	project(v, xa, ya, za, 1, A);
+	ctx.moveTo(A[0], A[1]);
+	project(v, xb, yb, zb, 1, A);
+	ctx.lineTo(A[0], A[1]);
+}
+
+// A flat circle at height y, added to the current path.
+function circle(ctx, v, x, y, z, r) {
+	for (let i = 0; i <= 16; i++) {
+		const t = (i / 16) * Math.PI * 2;
+		project(v, x + Math.cos(t) * r, y, z + Math.sin(t) * r, 1, A);
+		if (i) ctx.lineTo(A[0], A[1]);
+		else ctx.moveTo(A[0], A[1]);
+	}
+	ctx.closePath();
+}
+
+// A flat [x, z, x, z, …] polyline at height y, added to the current path.
+function poly(ctx, v, pts, y) {
+	for (let i = 0; i < pts.length; i += 2) {
+		project(v, pts[i], y, pts[i + 1], 1, A);
+		if (i) ctx.lineTo(A[0], A[1]);
+		else ctx.moveTo(A[0], A[1]);
+	}
+}
+
+function rgba(c, a) {
+	return `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${a})`;
+}

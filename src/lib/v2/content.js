@@ -371,3 +371,366 @@ export const contact = {
 	footLeft: 'Junesforge · Bengaluru · 2026',
 	footRight: 'Designed & built by Agni'
 };
+
+/* =============================================================
+   STUDIO — the freelance-facing home at /next.
+   The deck above is still what `/` renders. Design, Code and
+   Contact are shared and locked; everything below is new.
+   Lines marked REVIEW are provisional claims or numbers that
+   only Agni can confirm.
+   ============================================================= */
+
+export const STUDIO_LABELS = ['Home', 'Design', 'Code', 'Work', 'Packages', 'Process', 'FAQ', 'Contact'];
+
+const EMAIL = 'junesforge@proton.me';
+
+/* A mailto that opens with the three questions every first call needs. */
+export const enquiry = {
+	label: 'Start a project',
+	href:
+		`mailto:${EMAIL}?subject=${encodeURIComponent('New project enquiry')}` +
+		`&body=${encodeURIComponent("Hi Agni,\n\nWhat I'm building:\n\nRough budget:\n\nWhen I'd like it live:\n\n")}`
+};
+
+export const studioMeta = {
+	title: 'Junesforge — Websites and web apps, designed and built by one person',
+	description:
+		'Junesforge is an independent design and development studio in Bengaluru. Websites, brands and web apps for small businesses, from first call to launch.'
+};
+
+/* ---- HERO --------------------------------------------------
+   The nav sits on the home screen; the claim, lede, buttons and
+   facts now sit beside the exploded chip on the second screen. */
+export const hero = {
+	nav: [
+		{ label: 'Work', goto: 3 },
+		{ label: 'Packages', goto: 4 },
+		{ label: 'Process', goto: 5 },
+		{ label: 'FAQ', goto: 6 }
+	],
+	// Rendered as two lines; the second takes the accent.
+	headline: ['Agency-grade websites and web apps.', 'Without the agency.'],
+	lede:
+		'Junesforge is a one-person studio. You work directly with the person designing your site and writing its code, from the first call to launch day and after.',
+	secondary: { label: 'See the work', goto: 3 },
+	// REVIEW: each of these should be something you're happy to be held to.
+	facts: [
+		{ k: '4 yrs', v: 'engineering internal tools at Juniper Networks' },
+		{ k: '3', v: 'international conferences branded' },
+		{ k: '2', v: 'products designed, built and shipped solo' },
+		{ k: '24 h', v: 'to reply to every enquiry' }
+	],
+	place: 'Bengaluru, India · working with clients anywhere'
+};
+
+/* ---- THE CHIP (the home scene) -----------------------------
+   The home scene (panels/Board.svelte) opens on two words and the
+   circuit; scrolled, it takes the circuit apart beside the hero's
+   claim above (panels/Claim.svelte). Pillar names and their cards
+   are in brand-graph.js. */
+export const board = {
+	// Over the resting board, as large as the page allows.
+	words: ['Integrated', 'Unified'],
+	// Under the resting board, once it has settled.
+	hint: { hover: 'Hover the board to look inside', tap: 'Tap the board to look inside' },
+	// The chip readout: what a part takes its values from.
+	takesFrom: 'Takes from',
+	source: 'Everything else starts here',
+	/* Not on the page right now. Agni's own line: no Ogilvy original
+	   turned up, so it carries no attribution if it comes back. */
+	line: ['Marketing is 10% creativity', 'and 90% systems.'],
+	/* The processor is all of marketing. `maker`, `name` and `part`
+	   are lettered on its lid; `does` is read out to screen readers.
+	   `lid: 'logo'` shows the Junesforge logo there instead, on the
+	   home screen.
+	   REVIEW: the part number is a nod to the line, 10% and 90%. */
+	chip: {
+		maker: 'Junesforge',
+		part: 'MK-1090',
+		name: 'Marketing',
+		does: 'Turns attention into revenue',
+		lid: 'name' // 'name' | 'logo'
+	},
+	alt: 'Marketing as one integrated circuit: the brand at its core, wired to its substance, material, rules, form and signal.'
+};
+
+/* ---- 05 · WORK ---------------------------------------------
+   `kind` drives the tag: concept work is always labelled as such.
+   Visuals: `image` wins; otherwise `preview` renders the live page
+   as a thumbnail; with neither, a labelled slot holds the space.
+   Drop screenshots into /static/images/work/ and set `image`. */
+export const work = {
+	heading: 'Work',
+	lede:
+		'Brand marks for three international conferences, two products shipped end to end, and concept projects that show how I take a brief from problem to screen.',
+	items: [
+		{
+			kind: 'Concept',
+			title: 'Halden Physio',
+			type: 'Website and booking flow',
+			brief: 'A neighbourhood clinic losing patients to phone tag and a booking form nobody finishes.',
+			did: 'Brand, a five-section site, and a booking flow that goes from treatment to confirmed slot in four taps.',
+			links: [{ label: 'Open the prototype', href: '/concepts/halden/' }],
+			preview: '/concepts/halden/',
+			image: null,
+			wide: true
+		},
+		{
+			kind: 'Concept',
+			title: 'Mise',
+			type: 'Web app · onboarding and dashboard',
+			brief: 'A cloud kitchen running stock on a notebook and a WhatsApp group.',
+			did: 'Onboarding that builds the kitchen as you answer, then a dashboard for orders, stock alerts and the morning prep list.',
+			links: [{ label: 'Open the prototype', href: '/concepts/mise/' }],
+			preview: '/concepts/mise/#dashboard',
+			image: null,
+			wide: true
+		},
+		{
+			kind: 'Client',
+			title: 'Conference identities',
+			type: 'Logo and brand marks',
+			brief: 'Three international events, each needing a mark that works on a lanyard and on a stage screen.',
+			did: 'GCC Conference on Energy Communication, an ESG summit, and the Future Wellbeing Congress.',
+			links: [{ label: 'See them on Dribbble', href: 'https://dribbble.com/jxnesforge' }],
+			strip: [
+				{ src: '/images/GCEC2.jpg', alt: 'GCEC monogram for the GCC Conference on Energy Communication', fit: 'contain' },
+				{ src: '/images/ESG1.png', alt: 'ESG summit banner mark', fit: 'contain' },
+				{ src: '/images/FWC1.png', alt: 'Future Wellbeing Congress butterfly mark', fit: 'cover' }
+			]
+		},
+		{
+			kind: 'Product',
+			title: 'Propsize',
+			type: '3D editor · live',
+			brief: 'Measure, resize and refit 3D props to real-world scale, in the browser.',
+			did: 'Product design, the 3D engine, and the editor UI. Built and shipped solo.',
+			links: [{ label: 'Open the tool', href: '/propsize' }],
+			image: '/images/products/propsize.jpg'
+		},
+		{
+			kind: 'Product',
+			title: 'Arboreum',
+			type: 'Notes app · live',
+			brief: 'A notes app where what you write grows into a garden of trees.',
+			did: 'Concept, interface and build, start to finish.',
+			links: [{ label: 'Open the app', href: 'https://arboreum-v1.vercel.app' }],
+			image: '/images/products/arboreum.jpg'
+		}
+	],
+	// The games, kept to one line. REVIEW: set the Agnifico address once it's live.
+	aside: {
+		text: 'In my own time I build browser games. They live on my personal site.',
+		label: 'Agnifico',
+		href: ''
+	}
+};
+
+/* ---- 06 · PACKAGES -----------------------------------------
+   `from` is shown when set (e.g. '₹45,000'); left null, the card
+   says the price comes after a short call. REVIEW all of it. */
+export const packages = {
+	heading: 'Packages',
+	lede: 'Four ways to start. Every project gets a fixed quote, agreed before any work begins.',
+	items: [
+		{
+			name: 'Launch',
+			for: 'A new business, or a relaunch that is overdue.',
+			includes: [
+				'Up to five pages, mobile first',
+				'Help writing the copy',
+				'Contact or booking form',
+				'Search basics and analytics',
+				'Hosting set up in your name'
+			],
+			time: '2–3 weeks',
+			from: null
+		},
+		{
+			name: 'Brand + Site',
+			for: 'When you need to look like yourself before you go live.',
+			includes: [
+				'Logo and wordmark',
+				'Colour and type system',
+				'Social and print kit',
+				'Everything in Launch'
+			],
+			time: '4–6 weeks',
+			from: null,
+			featured: true
+		},
+		{
+			name: 'Web app',
+			for: 'Bookings, dashboards, inventory, admin panels, the internal tool you keep doing by hand.',
+			includes: [
+				'Workflow mapping before any screens',
+				'Designed and built end to end',
+				'Logins, roles and a real database',
+				'Handover docs your next developer can read'
+			],
+			time: 'Scoped on a call',
+			from: null
+		},
+		{
+			name: 'Care',
+			for: 'After launch, for anyone who would rather not think about it.',
+			includes: [
+				'Updates, fixes and small changes',
+				'Uptime and backup checks',
+				'A monthly report in plain language'
+			],
+			time: 'Monthly',
+			from: null
+		}
+	],
+	priceFallback: 'Fixed quote after a 20-minute call'
+};
+
+/* ---- 07 · PROCESS + ABOUT ---------------------------------- */
+export const process = {
+	heading: 'How a project runs',
+	steps: [
+		{ title: 'A 20-minute call', blurb: 'Free. What you need, what it is for, and whether I am the right person for it.' },
+		{ title: 'A written proposal', blurb: 'Scope, timeline and a fixed price, within two working days.' },
+		{ title: 'Design, then build', blurb: 'You get a live preview link from the first week and see the site take shape.' },
+		{ title: 'Launch and handover', blurb: 'The code, the domain and every account are yours, with notes on how it all fits.' }
+	],
+	whyHeading: 'Why one person',
+	why: [
+		{ title: 'You talk to the maker', blurb: 'No account manager relaying your feedback. The person on the call is the person doing the work.' },
+		{ title: 'Design and code in one head', blurb: 'Nothing gets lost between a designer and a developer, because there is no handoff.' },
+		{ title: 'You own everything', blurb: 'No lock-in and no proprietary builder. If you ever move on, the next developer can pick it up.' }
+	],
+	whyLink: { label: 'Why not an agency?', href: '/next/agencies' },
+	about: {
+		heading: 'Who is behind it',
+		photo: null, // REVIEW: a real photo does more here than anything else on the page
+		body: [
+			'I am Agni. I spent four years at Juniper Networks building internal AI tools, including a language model for network engineers.',
+			'Before that I studied computer engineering at MIT Manipal and edited the student paper, MTTN, with 150 writers, artists and photographers. Junesforge is where both halves meet.'
+		],
+		link: { label: 'More about me on Agnifico', href: '' } // REVIEW: Agnifico URL
+	}
+};
+
+/* ---- 08 · FAQ ---------------------------------------------- */
+export const faq = {
+	heading: 'Questions',
+	items: [
+		{
+			q: 'How much does a website cost?',
+			a: 'It depends on the pages, the features and whether you need a brand first. After a short call you get a fixed quote in writing, and that is the price.'
+		},
+		{
+			q: 'How long will it take?',
+			a: 'A Launch site usually takes two to three weeks, a brand and site four to six. Web apps are scoped individually. You will have a date before we start.'
+		},
+		{
+			q: 'I do not have my content ready. Is that a problem?',
+			a: 'No. Most clients do not. I help write and structure the copy, and I can source or create the imagery.'
+		},
+		{
+			q: 'What do you build with?',
+			a: 'A modern web stack: SvelteKit or React, three.js when something needs to be 3D, and a simple editor if you want to update content yourself.'
+		},
+		{
+			q: 'Will I own the site?',
+			a: 'Yes. The code, the domain and the hosting account are in your name from day one.'
+		},
+		{
+			q: 'What happens after launch?',
+			a: 'Two weeks of fixes are included. After that you can take the Care plan, book changes as you need them, or hand it to anyone you like.'
+		},
+		{
+			q: 'Do you work with clients outside India?',
+			a: 'Yes. Everything runs remotely, and I keep a few hours of overlap with your working day.'
+		}
+	]
+};
+
+/* ---- VERSUS (/next/agencies) -------------------------------
+   The case against the agency model, from someone who has been
+   inside agencies and has been the freelancer they call. Every
+   claim is first-hand or framed as what Agni saw; no agency or
+   client is named, and none should be.
+   REVIEW the receipt: the numbers are as Agni remembers them. */
+export const versus = {
+	meta: {
+		title: 'Junesforge vs the agency: your agency was going to hire me anyway',
+		description:
+			'A lot of agencies in India sell you a name, then subcontract the work to freelancers. Hire the freelancer directly.'
+	},
+	hero: {
+		label: 'Junesforge vs the agency',
+		headline: ['Your agency', 'was going to', 'hire me anyway.'],
+		lede:
+			'A lot of agencies in India are a founder, a salesperson and a phone full of freelancers. You pay for the name on the invoice. The work goes to someone like me, hired on contract after you sign, for a fraction of what you paid.'
+	},
+	/* In the flow: one number and two bars. The story itself opens
+	   on demand, in a card. REVIEW the figures: they are as Agni
+	   remembers them, and the multiple and bars are worked out
+	   from them. */
+	receipt: {
+		label: 'This happened',
+		heading: 'Same project. Same person. Two prices.',
+		multiple: 'the price through an agency, for the same person doing the same work',
+		bars: {
+			direct: 'Hiring me',
+			agency: 'Hiring the agency',
+			work: 'the work',
+			markup: 'markup',
+			fee: 'fee'
+		},
+		coda: 'Freelancers in India quote low to compete with agency names. Agencies hire those same freelancers and bill you as if they had a team. You pay twice for one person: once for the work, and once for the letterhead.',
+		open: 'Read what happened',
+		story: [
+			'A client asked me to quote for a website. I pitched it at ₹80,000.',
+			'Some time later an agency messaged me. They needed a website built. As the details came in, I recognised the brief. It was the same project.',
+			'The agency offered me ₹1,50,000 to build it. They had told the client the developer was charging ₹2,00,000, and added their own 10% on top: ₹2,20,000 in all.'
+		],
+		// direct: what Agni quoted. agency: what the developer was offered,
+		// what the client was told it cost, and the agency's fee on top.
+		figures: { direct: 80000, paid: 150000, billed: 200000, fee: 20000 }
+	},
+	inside: {
+		label: 'From the inside',
+		heading: 'What you are actually paying for',
+		items: [
+			{
+				title: 'The people in the pitch are not the people on the job.',
+				body: 'Many small agencies are two or three founders and someone in business development. Selling is their job. They stay short-staffed on purpose, because every salary they do not pay is margin, so your project goes to whoever is free, or to whoever they hire after you sign. I have worked in these teams.'
+			},
+			{
+				title: 'One video person. Fifteen other projects.',
+				body: 'A good videographer or video editor is rare, so most agencies keep one. Your shoot joins their queue, and your edit gets whatever time is left.'
+			},
+			{
+				title: 'Your website is outsourced.',
+				body: 'Most agencies do not keep developers. They find one per project, on contract, at the lowest rate they can get. I know because I am who they call.'
+			},
+			{
+				title: 'You cannot see who you are hiring.',
+				body: 'The best designers leave small agencies fast, for in-house roles, top studios or their own practice. The portfolio you were shown was made by people who may be gone. Who gets your project is decided after you pay.'
+			}
+		]
+	},
+	proof: {
+		label: 'Judge the thinking',
+		heading: 'Ask an agency to show you how it thinks.',
+		body: [
+			'On my home page is how I see marketing: 67 functions, from the brand’s voice to its packaging to its posting schedule, wired into one integrated circuit. It is the map I work from on every project.',
+			'An agency splits that map across five departments and a contractor. Here, one person holds all of it.'
+		],
+		link: { label: 'See the circuit', href: '/next' }
+	},
+	fair: {
+		label: 'To be fair',
+		heading: 'When you should hire an agency',
+		body: 'Running a national TV campaign, fifty deliverables a month, or crores in media spend? Hire one. The good ones exist, mostly at the very top, and they earn their fee. For a brand, a website or a product built properly, you do not need five layers of people. You need the one doing the work.'
+	},
+	close: {
+		heading: ['Cut out', 'the middle.'],
+		lede: 'Same work, no markup. You talk to the person building it, from the first call to launch day.',
+		back: { label: 'Back to Junesforge', href: '/next' }
+	}
+};

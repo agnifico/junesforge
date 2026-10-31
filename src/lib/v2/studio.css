@@ -1,0 +1,213 @@
+/* =============================================================
+   STUDIO — stylesheet for the scrolling home at /next.
+   Loaded after theme.css. Two jobs:
+   1. Re-seat the deck's screens in normal document flow, so the
+      locked Design / Code / Contact panels render exactly as they
+      do in the deck, just one after another down the page.
+   2. The new sections' own system: one grotesk, black and white,
+      a single emerald accent taken from the logo. Prefixed `jf-s-`.
+   ============================================================= */
+
+.jf-root.jf-studio {
+	--em: #22c58b; /* fills, and text on dark */
+	--em-ink: #0b7a53; /* text on light */
+	--s-black: #0e0e0e;
+	--s-white: #f4f4f1;
+	--s-grey: #8b8b86;
+	--s-grey-dk: #5c5c58;
+	--s-line: rgba(244, 244, 241, 0.14);
+	--s-line-dk: rgba(14, 14, 14, 0.12);
+	--grotesk: 'Schibsted Grotesk', 'Helvetica Neue', Arial, sans-serif;
+
+	position: relative;
+	inset: auto;
+	overflow: visible;
+	background: var(--s-black);
+	touch-action: auto;
+}
+.jf-studio ::selection {
+	background: var(--em);
+	color: var(--s-black);
+}
+
+/* ---- screens in flow ---------------------------------------- */
+.jf-studio .jf-screen {
+	position: relative;
+	height: auto;
+	min-height: 100dvh;
+	overflow: visible;
+	scroll-margin-top: 0;
+}
+/* Design and Code are composed for exactly one viewport: their
+   split is absolutely positioned against the screen. */
+.jf-studio .jf-screen.jf-frame {
+	height: 100dvh;
+	min-height: 0;
+	overflow: hidden;
+}
+/* New sections are as tall as their content, not a forced screenful. */
+.jf-studio .jf-screen.jf-s-auto {
+	min-height: 0;
+}
+
+.jf-s-dark {
+	background: var(--s-black);
+	color: var(--s-white);
+}
+.jf-s-light {
+	background: var(--s-white);
+	color: var(--s-black);
+}
+
+/* ---- new-section type --------------------------------------- */
+.jf-s {
+	font-family: var(--grotesk);
+	font-feature-settings: 'ss01', 'tnum' 0;
+	padding: clamp(64px, 10vw, 140px) var(--pad-r) clamp(64px, 10vw, 140px) var(--pad-x);
+}
+.jf-s-wrap {
+	max-width: 1240px;
+	margin: 0 auto;
+}
+.jf-s-label {
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--em);
+	margin: 0 0 18px;
+}
+.jf-s-light .jf-s-label {
+	color: var(--em-ink);
+}
+.jf-s-h2 {
+	margin: 0;
+	font-weight: 800;
+	font-size: clamp(40px, 6.4vw, 88px);
+	line-height: 0.95;
+	letter-spacing: -0.035em;
+}
+.jf-s-lede {
+	margin: 20px 0 0;
+	max-width: 56ch;
+	font-size: clamp(17px, 1.5vw, 20px);
+	line-height: 1.45;
+	color: var(--s-grey);
+	text-wrap: pretty;
+}
+.jf-s-light .jf-s-lede {
+	color: var(--s-grey-dk);
+}
+.jf-s-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	justify-content: space-between;
+	gap: 20px 48px;
+	margin-bottom: clamp(36px, 5vw, 64px);
+}
+
+/* ---- buttons ------------------------------------------------ */
+.jf-s-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	padding: 15px 22px;
+	border-radius: 999px;
+	font-family: var(--grotesk);
+	font-size: 16px;
+	font-weight: 600;
+	line-height: 1;
+	border: 1.5px solid transparent;
+	cursor: pointer;
+	transition:
+		background 0.2s ease,
+		color 0.2s ease,
+		border-color 0.2s ease,
+		transform 0.2s ease;
+}
+.jf-s-btn:active {
+	transform: translateY(1px);
+}
+.jf-s-btn.primary {
+	background: var(--em);
+	color: var(--s-black);
+}
+.jf-s-btn.primary:hover {
+	background: var(--s-white);
+}
+.jf-s-light .jf-s-btn.primary:hover {
+	background: var(--s-black);
+	color: var(--s-white);
+}
+.jf-s-btn.ghost {
+	background: none;
+	color: inherit;
+	border-color: currentColor;
+}
+.jf-s-btn.ghost:hover {
+	border-color: var(--em);
+	color: var(--em);
+}
+.jf-s-light .jf-s-btn.ghost:hover {
+	border-color: var(--em-ink);
+	color: var(--em-ink);
+}
+.jf-s-btn:focus-visible,
+.jf-s a:focus-visible,
+.jf-s button:focus-visible,
+.jf-s summary:focus-visible {
+	outline: 2px solid var(--em);
+	outline-offset: 3px;
+}
+.jf-s-btn .arr {
+	transition: transform 0.2s ease;
+}
+.jf-s-btn:hover .arr {
+	transform: translateX(3px);
+}
+
+/* ---- floating enquiry pill ---------------------------------- */
+.jf-s-float {
+	position: fixed;
+	right: clamp(52px, 5.4vw, 76px);
+	bottom: calc(clamp(14px, 2vw, 24px) + env(safe-area-inset-bottom, 0px));
+	z-index: 50;
+	box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+	transition:
+		opacity 0.3s ease,
+		transform 0.3s ease,
+		background 0.2s ease,
+		color 0.2s ease;
+}
+.jf-s-float[data-hidden='true'] {
+	opacity: 0;
+	transform: translateY(12px);
+	pointer-events: none;
+}
+.jf-s-float:hover {
+	background: var(--s-white);
+	color: var(--s-black);
+}
+
+@media (max-width: 760px) {
+	.jf-s-float {
+		right: 16px;
+		left: 16px;
+		justify-content: center;
+	}
+}
+
+/* The rail and progress bar take the studio accent. */
+.jf-studio .jf-progress {
+	background: var(--em);
+	transition: none;
+}
+.jf-studio .jf-rail button:focus-visible {
+	outline-color: var(--em);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.jf-s-btn,
+	.jf-s-float {
+		transition-duration: 1ms;
+	}
+}

@@ -1,69 +1,75 @@
 <script>
-	import { packages as c, enquiry } from '../content.js';
+	/* =========================================================
+	   07 · PACKAGES + FAQ — one screen. The ways to work together
+	   as a short strip (name, who it is for, how long), then the
+	   questions. Prices and what each includes come out on the call.
+	   Copy: content.js (packages, faq).
+	   ========================================================= */
+	import { packages as c, faq, enquiry } from '../content.js';
 </script>
 
 <div class="jf-s">
 	<div class="jf-s-wrap">
-		<div class="jf-s-head jf-in">
-			<div>
-				<p class="jf-s-label">Ways to work together</p>
-				<h2 class="jf-s-h2">{c.heading}</h2>
-			</div>
-			<p class="jf-s-lede">{c.lede}</p>
-		</div>
+		<h2 class="jf-s-h2 jf-in">{c.heading}</h2>
 
-		<div class="grid">
-			{#each c.items as p}
-				<article class="pkg" class:featured={p.featured}>
+		<ol class="strip">
+			{#each c.items as p (p.name)}
+				<li class:featured={p.featured}>
 					<h3>{p.name}</h3>
 					<p class="for">{p.for}</p>
-					<ul>
-						{#each p.includes as line}
-							<li>{line}</li>
-						{/each}
-					</ul>
-					<div class="meta">
-						<div>
-							<span class="k">Timeline</span>
-							<span class="v">{p.time}</span>
-						</div>
-						<div>
-							<span class="k">Price</span>
-							<span class="v">{p.from ? `From ${p.from}` : c.priceFallback}</span>
-						</div>
-					</div>
-				</article>
+					<p class="time">{p.time}</p>
+				</li>
 			{/each}
-		</div>
+		</ol>
 
-		<div class="cta">
-			<p>Not sure which one fits? Tell me what you are building and I will suggest one.</p>
-			<a class="jf-s-btn primary" href={enquiry.href}>{enquiry.label} <span class="arr">→</span></a>
+		<div class="faq">
+			<div class="intro jf-in">
+				<h2 class="sub">{faq.heading}</h2>
+				<p>{faq.lede}</p>
+				<a class="jf-s-btn ghost" href={enquiry.href}>Email me</a>
+			</div>
+
+			<div class="list">
+				{#each faq.items as it (it.q)}
+					<details>
+						<summary>
+							<span>{it.q}</span>
+							<span class="pm" aria-hidden="true"></span>
+						</summary>
+						<p>{it.a}</p>
+					</details>
+				{/each}
+			</div>
 		</div>
 	</div>
 </div>
 
 <style>
-	.grid {
+	/* ---- the strip: four across, ruled, no cards ------------ */
+	.strip {
+		list-style: none;
+		margin: clamp(24px, 3.5vw, 44px) 0 0;
+		padding: 0;
 		display: grid;
 		grid-template-columns: repeat(4, minmax(0, 1fr));
-		gap: 14px;
+		border-top: 1px solid var(--s-line);
 	}
-	.pkg {
+	.strip li {
 		display: flex;
 		flex-direction: column;
-		padding: 26px 24px 24px;
-		border: 1px solid var(--s-line);
-		border-radius: 14px;
-		background: #151515;
+		padding: 22px 24px 4px 0;
 	}
-	.pkg.featured {
-		border-color: var(--em);
-		box-shadow: inset 0 0 0 1px var(--em);
+	.strip li + li {
+		padding-left: 24px;
+		border-left: 1px solid var(--s-line);
+	}
+	/* the featured one is marked on the rule above it */
+	.strip li.featured {
+		box-shadow: inset 0 2px 0 var(--em);
 	}
 	h3 {
 		margin: 0;
-		font-size: 26px;
+		font-size: clamp(21px, 1.9vw, 26px);
 		font-weight: 800;
 		letter-spacing: -0.025em;
 	}
@@ -71,83 +77,133 @@
 		color: var(--em);
 	}
 	.for {
-		margin: 10px 0 0;
-		font-size: 15.5px;
+		margin: 8px 0 0;
+		font-size: 15px;
 		line-height: 1.45;
 		color: #b4b4ae;
 		text-wrap: pretty;
 	}
-	ul {
-		list-style: none;
-		margin: 22px 0 0;
-		padding: 18px 0 0;
-		border-top: 1px solid var(--s-line);
-		display: grid;
-		gap: 10px;
-	}
-	li {
-		position: relative;
-		padding-left: 22px;
-		font-size: 15px;
-		line-height: 1.4;
-	}
-	li::before {
-		content: '';
-		position: absolute;
-		left: 2px;
-		top: 0.42em;
-		width: 9px;
-		height: 5px;
-		border-left: 2px solid var(--em);
-		border-bottom: 2px solid var(--em);
-		transform: rotate(-45deg);
-	}
-	.meta {
-		margin-top: auto;
-		padding-top: 24px;
-		display: grid;
-		gap: 12px;
-	}
-	.meta div {
-		display: flex;
-		flex-direction: column;
-		gap: 3px;
-	}
-	.k {
-		font-size: 13px;
-		color: var(--s-grey);
-	}
-	.v {
-		font-size: 15.5px;
+	.time {
+		margin: auto 0 0;
+		padding-top: 14px;
+		font-size: 14px;
 		font-weight: 700;
 	}
 
-	.cta {
-		margin-top: clamp(28px, 3.4vw, 44px);
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 18px 32px;
-		padding-top: clamp(24px, 3vw, 36px);
+	/* ---- the questions -------------------------------------- */
+	.faq {
+		margin-top: clamp(48px, 6vw, 88px);
+		display: grid;
+		grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+		gap: clamp(32px, 6vw, 96px);
+		align-items: start;
+	}
+	.sub {
+		margin: 0;
+		font-size: clamp(28px, 3vw, 40px);
+		font-weight: 800;
+		letter-spacing: -0.03em;
+		line-height: 1;
+	}
+	.intro p {
+		margin: 14px 0 0;
+		font-size: 16.5px;
+		color: #b4b4ae;
+	}
+	.intro .jf-s-btn {
+		margin-top: 24px;
+	}
+	.list {
 		border-top: 1px solid var(--s-line);
 	}
-	.cta p {
-		margin: 0;
-		font-size: clamp(18px, 1.7vw, 22px);
+	details {
+		border-bottom: 1px solid var(--s-line);
+	}
+	summary {
+		list-style: none;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 20px;
+		padding: 20px 0;
+		cursor: pointer;
+		font-size: clamp(17px, 1.6vw, 20px);
 		font-weight: 600;
 		letter-spacing: -0.01em;
-		max-width: 40ch;
+	}
+	summary::-webkit-details-marker {
+		display: none;
+	}
+	summary:hover {
+		color: var(--em);
+	}
+	summary:focus-visible {
+		outline: 2px solid var(--em);
+		outline-offset: 4px;
+	}
+	.pm {
+		position: relative;
+		flex: 0 0 auto;
+		width: 14px;
+		height: 14px;
+	}
+	.pm::before,
+	.pm::after {
+		content: '';
+		position: absolute;
+		left: 0;
+		top: 6px;
+		width: 14px;
+		height: 2px;
+		background: currentColor;
+		transition: transform 0.25s ease;
+	}
+	.pm::after {
+		transform: rotate(90deg);
+	}
+	details[open] .pm::after {
+		transform: rotate(0deg);
+	}
+	details p {
+		margin: -6px 0 0;
+		padding: 0 40px 22px 0;
+		font-size: 16px;
+		line-height: 1.55;
+		color: #b4b4ae;
+		max-width: 62ch;
 	}
 
 	@media (max-width: 1100px) {
-		.grid {
+		.strip {
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
+		.strip li:nth-child(3) {
+			padding-left: 0;
+			border-left: 0;
+		}
+		.strip li:nth-child(n + 3) {
+			border-top: 1px solid var(--s-line);
+		}
 	}
-	@media (max-width: 620px) {
-		.grid {
+	@media (max-width: 860px) {
+		.faq {
 			grid-template-columns: minmax(0, 1fr);
+		}
+	}
+	@media (max-width: 560px) {
+		.strip {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.strip li + li {
+			padding-left: 0;
+			border-left: 0;
+			border-top: 1px solid var(--s-line);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.pm::before,
+		.pm::after {
+			transition: none;
 		}
 	}
 </style>

@@ -58,6 +58,12 @@
 	background: var(--s-white);
 	color: var(--s-black);
 }
+/* Work: the Design mark's ground (--dark-rust, #78453b) taken down
+   to about 60%. For a dark green instead, try #0f3328. */
+.jf-s-brick {
+	background: #482923;
+	color: var(--s-white);
+}
 
 /* ---- new-section type --------------------------------------- */
 .jf-s {

@@ -17,9 +17,9 @@
 	import Design from '$lib/v2/panels/Design.svelte';
 	import Code from '$lib/v2/panels/Code.svelte';
 	import Work from '$lib/v2/panels/Work.svelte';
-	import Packages from '$lib/v2/panels/Packages.svelte';
+	import Why from '$lib/v2/panels/Why.svelte';
 	import Process from '$lib/v2/panels/Process.svelte';
-	import Faq from '$lib/v2/panels/Faq.svelte';
+	import Packages from '$lib/v2/panels/Packages.svelte';
 	import Contact from '$lib/v2/panels/Contact.svelte';
 
 	const PARALLAX = 1;
@@ -31,10 +31,13 @@
 		{ Panel: Board, ground: 'jf-s-dark', light: false },
 		{ Panel: Design, ground: 'jf-light', light: true, frame: true },
 		{ Panel: Code, ground: 'jf-dark', light: false, frame: true },
-		{ Panel: Work, ground: 'jf-s-light', light: true, auto: true },
-		{ Panel: Packages, ground: 'jf-s-dark', light: false, auto: true },
+		// a dark brick ground, the Design mark's rust taken down, so the white cards stand out
+		{ Panel: Work, ground: 'jf-s-brick', light: false, auto: true },
+		// the agencies argument: the receipt, the charges answered, the close
+		{ Panel: Why, ground: 'jf-s-dark', light: false, auto: true },
 		{ Panel: Process, ground: 'jf-s-light', light: true, auto: true },
-		{ Panel: Faq, ground: 'jf-s-dark', light: false, auto: true },
+		// ways to work together and the questions, one screen
+		{ Panel: Packages, ground: 'jf-s-dark', light: false, auto: true },
 		{ Panel: Contact, ground: 'jf-forest', light: false, pad: true }
 	];
 	const N = SCREENS.length;

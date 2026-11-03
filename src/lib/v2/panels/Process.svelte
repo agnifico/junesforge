@@ -5,7 +5,6 @@
 <div class="jf-s">
 	<div class="jf-s-wrap">
 		<div class="jf-in">
-			<p class="jf-s-label">Process</p>
 			<h2 class="jf-s-h2">{c.heading}</h2>
 		</div>
 
@@ -19,18 +18,8 @@
 			{/each}
 		</ol>
 
+		<!-- "Why one person" now answers the agencies on the Why screen -->
 		<div class="split">
-			<section class="why">
-				<h3 class="sub">{c.whyHeading}</h3>
-				{#each c.why as w}
-					<div class="why-row">
-						<h4>{w.title}</h4>
-						<p>{w.blurb}</p>
-					</div>
-				{/each}
-				<a class="vs" href={c.whyLink.href}>{c.whyLink.label} <span class="arr">→</span></a>
-			</section>
-
 			<section class="about">
 				<h3 class="sub">{c.about.heading}</h3>
 				<div class="who">
@@ -60,7 +49,7 @@
 <style>
 	.steps {
 		list-style: none;
-		margin: clamp(36px, 5vw, 64px) 0 0;
+		margin: clamp(28px, 3.5vw, 44px) 0 0;
 		padding: 0;
 		display: grid;
 		grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -68,7 +57,7 @@
 		border-top: 2px solid var(--s-black);
 	}
 	.steps li {
-		padding: 22px 22px 6px 0;
+		padding: 18px 22px 4px 0;
 	}
 	.n {
 		display: grid;
@@ -82,8 +71,8 @@
 		font-weight: 700;
 	}
 	.steps h3 {
-		margin: 18px 0 0;
-		font-size: 21px;
+		margin: 14px 0 0;
+		font-size: 20px;
 		font-weight: 800;
 		letter-spacing: -0.02em;
 	}
@@ -96,10 +85,13 @@
 	}
 
 	.split {
-		margin-top: clamp(56px, 8vw, 110px);
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-		gap: clamp(36px, 5vw, 80px);
+		margin-top: clamp(44px, 5.5vw, 72px);
+		padding-top: clamp(24px, 3vw, 36px);
+		border-top: 1px solid var(--s-line-dk);
+	}
+	/* one block, left aligned: the heading, then the person under it */
+	.about {
+		max-width: 780px;
 	}
 	.sub {
 		margin: 0 0 8px;
@@ -107,34 +99,6 @@
 		font-weight: 800;
 		letter-spacing: -0.03em;
 	}
-	.why-row {
-		padding: 18px 0;
-		border-bottom: 1px solid var(--s-line-dk);
-	}
-	.why-row h4 {
-		margin: 0;
-		font-size: 18px;
-		font-weight: 700;
-	}
-	.why-row p {
-		margin: 6px 0 0;
-		font-size: 15.5px;
-		line-height: 1.45;
-		color: var(--s-grey-dk);
-	}
-
-	.vs {
-		display: inline-block;
-		margin-top: 22px;
-		font-weight: 700;
-		color: var(--em-ink);
-		border-bottom: 1.5px solid currentColor;
-		padding-bottom: 2px;
-	}
-	.vs:hover {
-		color: var(--s-black);
-	}
-
 	.who {
 		display: grid;
 		grid-template-columns: 120px minmax(0, 1fr);
@@ -178,9 +142,6 @@
 	@media (max-width: 900px) {
 		.steps {
 			grid-template-columns: repeat(2, minmax(0, 1fr));
-		}
-		.split {
-			grid-template-columns: minmax(0, 1fr);
 		}
 	}
 	@media (max-width: 520px) {

@@ -380,7 +380,7 @@ export const contact = {
    only Agni can confirm.
    ============================================================= */
 
-export const STUDIO_LABELS = ['Home', 'Design', 'Code', 'Work', 'Packages', 'Process', 'FAQ', 'Contact'];
+export const STUDIO_LABELS = ['Home', 'Design', 'Code', 'Work', 'Why', 'Process', 'Packages', 'Contact'];
 
 const EMAIL = 'junesforge@proton.me';
 
@@ -399,27 +399,22 @@ export const studioMeta = {
 };
 
 /* ---- HERO --------------------------------------------------
-   The nav sits on the home screen; the claim, lede, buttons and
-   facts now sit beside the exploded chip on the second screen. */
+   The nav sits on the home screen; the claim, lede and buttons
+   sit beside the exploded chip on the second screen. */
 export const hero = {
 	nav: [
 		{ label: 'Work', goto: 3 },
-		{ label: 'Packages', goto: 4 },
+		{ label: 'Packages', goto: 6 },
 		{ label: 'Process', goto: 5 },
-		{ label: 'FAQ', goto: 6 }
+		{ label: 'FAQ', goto: 6 } // Packages and FAQ now share a screen
 	],
 	// Rendered as two lines; the second takes the accent.
-	headline: ['Agency-grade websites and web apps.', 'Without the agency.'],
+	headline: ['Agency-grade work.', 'Without the agency.'],
+	/* "works from the whole map", not "holds every part": which parts
+	   of the circuit Agni owns, directs or brings a partner in for is
+	   still to be marked (see the board). */
 	lede:
-		'Junesforge is a one-person studio. You work directly with the person designing your site and writing its code, from the first call to launch day and after.',
-	secondary: { label: 'See the work', goto: 3 },
-	// REVIEW: each of these should be something you're happy to be held to.
-	facts: [
-		{ k: '4 yrs', v: 'engineering internal tools at Juniper Networks' },
-		{ k: '3', v: 'international conferences branded' },
-		{ k: '2', v: 'products designed, built and shipped solo' },
-		{ k: '24 h', v: 'to reply to every enquiry' }
-	],
+		'Junesforge is one person: me. I design and build brands, websites and web apps, working from the whole map you see here, from a brand’s voice to its code. No departments, no handoffs, no contractor you never meet.',
 	place: 'Bengaluru, India · working with clients anywhere'
 };
 
@@ -431,8 +426,10 @@ export const hero = {
 export const board = {
 	// Over the resting board, as large as the page allows.
 	words: ['Integrated', 'Unified'],
-	// Under the resting board, once it has settled.
-	hint: { hover: 'Hover the board to look inside', tap: 'Tap the board to look inside' },
+	// The button bottom right that opens the whole circuit, and closes it.
+	expand: { open: 'Open the full circuit', close: 'Close the full circuit' },
+	// Read out to screen readers when it opens.
+	keys: 'Arrow keys step through the parts. Escape closes.',
 	// The chip readout: what a part takes its values from.
 	takesFrom: 'Takes from',
 	source: 'Everything else starts here',
@@ -463,8 +460,9 @@ export const board = {
    prerender crawl) without deleting it. */
 export const work = {
 	heading: 'Work',
-	lede:
-		'Brand marks for three international conferences, two products shipped end to end, and concept projects that show how I take a brief from problem to screen.',
+	// The carousel's arrows, read out to screen readers.
+	prev: 'Previous project',
+	next: 'Next project',
 	items: [
 		{
 			kind: 'Concept',
@@ -513,6 +511,15 @@ export const work = {
 			image: '/images/products/propsize.jpg'
 		},
 		{
+			kind: 'Game',
+			title: "Dawn's Journey",
+			type: 'Browser RPG · playable',
+			brief: 'A role-playing game in a hand-drawn world, that runs entirely in the browser.',
+			did: 'Quest engine, turn-based combat and the world itself. Built solo, with no backend.',
+			links: [{ label: 'Play it', href: 'https://dawns-journey.vercel.app/' }],
+			image: '/images/products/dawns-journey.jpg'
+		},
+		{
 			kind: 'Product',
 			title: 'Arboreum',
 			type: 'Notes app · live',
@@ -520,22 +527,35 @@ export const work = {
 			did: 'Concept, interface and build, start to finish.',
 			links: [{ label: 'Open the app', href: 'https://arboreum-v1.vercel.app' }],
 			image: '/images/products/arboreum.jpg'
+		},
+		{
+			kind: 'Game',
+			title: 'Fire Fighter Girl',
+			type: 'Browser game · playable',
+			brief: 'An open world you fly through.',
+			did: 'Built solo, start to finish.',
+			links: [{ label: 'Play it', href: 'https://firefightergirl.vercel.app/' }],
+			image: '/images/products/firefighter-girl.jpg'
+		},
+		{
+			kind: 'Game',
+			title: 'Chessboard Battlefield',
+			type: 'Tactics game · playable',
+			brief: 'Top-down tactics on a chequered field: move, hold ground, spend abilities.',
+			did: 'Rules, interface and build. Built solo.',
+			links: [{ label: 'Play it', href: 'https://chessboard-combat.vercel.app/' }],
+			image: '/images/products/chessboard-battlefield.jpg'
 		}
-	],
-	// The games, kept to one line. REVIEW: set the Agnifico address once it's live.
-	aside: {
-		text: 'In my own time I build browser games. They live on my personal site.',
-		label: 'Agnifico',
-		href: ''
-	}
+	]
 };
 
-/* ---- 06 · PACKAGES -----------------------------------------
-   `from` is shown when set (e.g. '₹45,000'); left null, the card
-   says the price comes after a short call. REVIEW all of it. */
+/* ---- PACKAGES (screen 07, with the FAQ) --------------------
+   The page shows each one's name, who it is for and how long it
+   takes. `includes`, `from` and `priceFallback` are not on the page
+   any more; they are kept for the call. REVIEW all of it. */
 export const packages = {
-	heading: 'Packages',
-	lede: 'Four ways to start. Every project gets a fixed quote, agreed before any work begins.',
+	// "Packages" stays only as the screen's id: on the page it reads as a price list.
+	heading: 'Ways to work together',
 	items: [
 		{
 			name: 'Launch',
@@ -594,18 +614,11 @@ export const packages = {
 export const process = {
 	heading: 'How a project runs',
 	steps: [
-		{ title: 'A 20-minute call', blurb: 'Free. What you need, what it is for, and whether I am the right person for it.' },
-		{ title: 'A written proposal', blurb: 'Scope, timeline and a fixed price, within two working days.' },
-		{ title: 'Design, then build', blurb: 'You get a live preview link from the first week and see the site take shape.' },
-		{ title: 'Launch and handover', blurb: 'The code, the domain and every account are yours, with notes on how it all fits.' }
+		{ title: 'A 20-minute call', blurb: 'Free. What you need, and whether I’m the right fit.' },
+		{ title: 'A written proposal', blurb: 'Scope, timeline and a fixed price in two working days.' },
+		{ title: 'Design, then build', blurb: 'A live preview link from the first week.' },
+		{ title: 'Launch and handover', blurb: 'The code, domain and accounts are yours, with notes.' }
 	],
-	whyHeading: 'Why one person',
-	why: [
-		{ title: 'You talk to the maker', blurb: 'No account manager relaying your feedback. The person on the call is the person doing the work.' },
-		{ title: 'Design and code in one head', blurb: 'Nothing gets lost between a designer and a developer, because there is no handoff.' },
-		{ title: 'You own everything', blurb: 'No lock-in and no proprietary builder. If you ever move on, the next developer can pick it up.' }
-	],
-	whyLink: { label: 'Why not an agency?', href: '/next/agencies' },
 	about: {
 		heading: 'Who is behind it',
 		photo: null, // REVIEW: a real photo does more here than anything else on the page
@@ -617,10 +630,47 @@ export const process = {
 	}
 };
 
-/* ---- 08 · FAQ ---------------------------------------------- */
+/* ---- WHY (screen 06) ----------------------------------------
+   The agencies argument, on the home page: the receipt (its figures
+   and story are in `versus` below, shared with /next/agencies), each
+   charge against an agency paired with what you get here instead,
+   and the close. The long read stays at /next/agencies. No charge
+   rests on Agni being a contractor now: Agni isn't. */
+export const why = {
+	// the premise, over the whole screen
+	eyebrow: 'Why not work with an agency?',
+	instead: 'How I work instead',
+	// who each line of a pair is about
+	sides: { agency: 'An agency', here: 'Junesforge' },
+	pairs: [
+		{
+			charge: 'The people in the pitch are not the people on the job.',
+			answer: 'You talk to the maker.',
+			blurb: 'No account manager relaying your feedback. The person on the call does the work.'
+		},
+		{
+			charge: 'Your website is outsourced.',
+			answer: 'Design and code in one head.',
+			blurb: 'No handoff between a designer and a developer, so nothing gets lost.'
+		},
+		{
+			charge: 'You cannot see who you are hiring.',
+			answer: 'You see exactly who you’re hiring.',
+			blurb: 'The work above is mine. What I make for you is yours: the code, the domain, every account.'
+		}
+	],
+	more: { label: 'Read the whole argument', href: '/next/agencies' }
+};
+
+/* ---- 07 · PACKAGES + FAQ (one screen) ----------------------- */
 export const faq = {
 	heading: 'Questions',
+	lede: 'Anything else, ask me directly.',
 	items: [
+		{
+			q: 'Should I hire an agency instead?',
+			a: 'Sometimes. Running a national TV campaign, fifty deliverables a month, or crores in media spend? Hire one: the good ones exist, mostly at the very top, and they earn their fee. For a brand, a website or a product built properly, you do not need five layers of people. You need the one doing the work.'
+		},
 		{
 			q: 'How much does a website cost?',
 			a: 'It depends on the pages, the features and whether you need a brand first. After a short call you get a fixed quote in writing, and that is the price.'

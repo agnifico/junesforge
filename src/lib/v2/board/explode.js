@@ -17,8 +17,17 @@ export const LIFT = [9, 18, 14, 11, 4, 7];
 const CAP_LIFT = 4.5; // the processor's capacitors, under it
 
 const BG = '#0e0e0e';
+/* With `fills` on, the faces take three flat greys in place of the
+   ground, so a part reads as solid without any lighting: tops the
+   lightest, the side facing you most a shade down, the other side
+   darkest. Chips sit in a top in the middle grey; slots and the
+   chips on a memory module are cut through to the ground. */
+const TOP = '#1a1a1a';
+const FRONT = '#111111';
+const FLANK = '#0a0a0a';
 const LINE = [244, 244, 241];
 const INK = 'rgba(4, 24, 15, 0.85)'; // lettering on the lit die
+export const LETTER = 'rgba(244, 244, 241, 0.62)'; // lettering on the die while it is off
 
 /* Line weights, heaviest first: a part's top outline, its sides, the
    chips on it, fine detail (pins, slots, module chips), and the plan
@@ -54,7 +63,18 @@ export function extents(m) {
 /* s = {
      p       0 on the board → 1 fully apart
      guides  the dashed drops and the label leaders, 0–1
-     mark    { name, maker, part } lettered on the processor's die
+     lit     { cell, lanes, cells } for the chip in focus, or null:
+             its traces and the chips it is wired to show in the accent
+     power   0 the board is off (the die drawn like everything else)
+             → 1 the die lit in the accent
+     glow    a soft round light (a canvas, drawn once) stamped over
+             the die while it is lit, or null
+     wired   0–1: the traces out of the processor in the accent
+     fills   faces in three flat greys in place of the ground, and the
+             finest detail as fills and the accent in place of lines
+     mark    { name, maker, part, logo } lettered on the processor's
+             die; with a logo (a canvas, already in the lid's ink) it
+             is drawn in place of the lettering
      font, em ([r, g, b]), dpr
      bg      the ground the faces are filled with, so what is behind
              a part is hidden (the page's own, by default)
@@ -62,6 +82,10 @@ export function extents(m) {
    Returns where each part's label goes, by ring: the end of a
    leader rising from the top of the part. */
 export function drawExploded(ctx, v, m, s) {
+	const ground = s.bg || BG;
+	s.faces = s.fills
+		? { top: TOP, front: FRONT, side: FLANK, chip: FRONT, cut: ground }
+		: { top: ground, front: ground, side: ground, chip: null, cut: null };
 	ctx.lineJoin = 'round';
 	ctx.lineCap = 'round';
 	plan(ctx, v, m, s);
@@ -76,7 +100,7 @@ export function drawExploded(ctx, v, m, s) {
 		if (it.c) {
 			const y = CAP_LIFT * s.p;
 			drops(ctx, v, it.c.x0, it.c.z0, it.c.x1, it.c.z1, y, s);
-			solid(ctx, v, it.c.x0, it.c.z0, it.c.x1, it.c.z1, y, y + it.c.h, CHIP, FINE, s.bg);
+			solid(ctx, v, it.c.x0, it.c.z0, it.c.x1, it.c.z1, y, y + it.c.h, CHIP, FINE, s.faces);
 			continue;
 		}
 		const p = it.p;
@@ -110,6 +134,32 @@ function plan(ctx, v, m, s) {
 		ctx.fillRect(A[0] - 0.8, A[1] - 0.8, 1.6, 1.6);
 		project(v, L.pts[n - 2], 0, L.pts[n - 1], 1, A);
 		ctx.fillRect(A[0] - 0.8, A[1] - 0.8, 1.6, 1.6);
+	}
+
+	// the processor's own traces, wired in the accent, and their pads
+	if (s.wired > 0) {
+		ctx.beginPath();
+		for (const L of m.lanes) if (L.ra === 0) poly(ctx, v, L.pts, 0);
+		ctx.strokeStyle = rgba(s.em, 0.5 * s.wired);
+		ctx.lineWidth = 0.8;
+		ctx.stroke();
+		ctx.fillStyle = rgba(s.em, 0.8 * s.wired);
+		for (const L of m.lanes) {
+			if (L.ra !== 0) continue;
+			const n = L.pts.length;
+			project(v, L.pts[n - 2], 0, L.pts[n - 1], 1, A);
+			ctx.fillRect(A[0] - 1, A[1] - 1, 2, 2);
+		}
+	}
+
+	// the chip in focus: its traces in the accent
+	if (s.lit) {
+		ctx.beginPath();
+		for (const k of s.lit.lanes) poly(ctx, v, m.lanes[k].pts, 0);
+		for (const t of m.antennas) if (t.cell === s.lit.cell) poly(ctx, v, t.pts, 0);
+		ctx.strokeStyle = rgba(s.em, 0.8);
+		ctx.lineWidth = 1.2;
+		ctx.stroke();
 	}
 
 	if (s.p < 0.02) return;
@@ -146,7 +196,7 @@ function drops(ctx, v, x0, z0, x1, z1, y, s) {
 
 function part(ctx, v, m, p, y, s) {
 	if (p.kind === 'core' || p.kind === 'ctrl') pins(ctx, v, p, y);
-	solid(ctx, v, p.x0, p.z0, p.x1, p.z1, y, y + p.h, EDGE, SIDE, s.bg);
+	solid(ctx, v, p.x0, p.z0, p.x1, p.z1, y, y + p.h, EDGE, SIDE, s.faces);
 	const top = y + p.h;
 
 	if (p.kind === 'memory') {
@@ -158,8 +208,9 @@ function part(ctx, v, m, p, y, s) {
 		});
 		for (const i of order) {
 			const c = m.cells[i];
-			solid(ctx, v, c.x0, c.z0, c.x1, c.z1, top, top + p.rise, CHIP, FINE, s.bg);
-			module(ctx, v, c, top, top + p.rise);
+			solid(ctx, v, c.x0, c.z0, c.x1, c.z1, top, top + p.rise, CHIP, FINE, s.faces);
+			accent(ctx, i, s); // its top, still the current path
+			module(ctx, v, c, top, top + p.rise, s);
 		}
 		return;
 	}
@@ -178,7 +229,41 @@ function part(ctx, v, m, p, y, s) {
 		const c = m.cells[i];
 		rect(ctx, v, c.x0, c.z0, c.x1, c.z1, lid);
 	}
+	if (s.faces.chip) {
+		ctx.fillStyle = s.faces.chip;
+		ctx.fill();
+	}
 	stroke(ctx, CHIP);
+	if (s.lit) {
+		for (const i of p.cells) {
+			const c = m.cells[i];
+			ctx.beginPath();
+			rect(ctx, v, c.x0, c.z0, c.x1, c.z1, lid);
+			accent(ctx, i, s);
+		}
+	}
+
+	// filled, a port is its outline, a slot cut through it and a
+	// contact tongue in the accent: two lines and a colour, not three lines
+	if (p.kind === 'ports' && s.faces.cut) {
+		ctx.beginPath();
+		for (const i of p.cells) {
+			const c = m.cells[i];
+			rect(ctx, v, c.x0 + 0.4, c.z0 + 0.9, c.x1 - 0.4, c.z1 - 0.9, lid);
+		}
+		ctx.fillStyle = s.faces.cut;
+		ctx.fill();
+		ctx.beginPath();
+		for (const i of p.cells) {
+			const c = m.cells[i];
+			const mx = (c.x0 + c.x1) / 2;
+			line(ctx, v, mx, lid, c.z0 + 1.6, mx, lid, c.z1 - 1.6);
+		}
+		ctx.strokeStyle = rgba(s.em, 0.7);
+		ctx.lineWidth = 1;
+		ctx.stroke();
+		return;
+	}
 
 	ctx.beginPath();
 	for (const i of p.cells) {
@@ -219,17 +304,14 @@ function pins(ctx, v, p, y) {
 	stroke(ctx, FINE);
 }
 
-// On the face of a memory module you can see: three chips, fine.
-function module(ctx, v, c, y0, y1) {
+/* On the face of a memory module you can see: three chips, fine
+   lines; filled, three dark chips with no outline and a strip of
+   contacts along the slot in the accent. */
+function module(ctx, v, c, y0, y1, s) {
 	if (Math.abs(v.sa) < 0.08) return;
 	const x = v.sa < 0 ? c.x0 : c.x1;
 	const span = c.z1 - c.z0 - 1.8;
-	ctx.beginPath();
-	for (let j = 0; j < 3; j++) {
-		const za = c.z0 + 0.9 + (j * span) / 3 + 0.25;
-		const zb = za + span / 3 - 0.5;
-		const ya = y0 + 0.75;
-		const yb = y1 - 0.45;
+	const face = (za, zb, ya, yb) => {
 		project(v, x, ya, za, 1, A);
 		ctx.moveTo(A[0], A[1]);
 		project(v, x, ya, zb, 1, A);
@@ -239,25 +321,53 @@ function module(ctx, v, c, y0, y1) {
 		project(v, x, yb, za, 1, A);
 		ctx.lineTo(A[0], A[1]);
 		ctx.closePath();
+	};
+	ctx.beginPath();
+	for (let j = 0; j < 3; j++) {
+		const za = c.z0 + 0.9 + (j * span) / 3 + 0.25;
+		face(za, za + span / 3 - 0.5, y0 + 0.75, y1 - 0.45);
 	}
-	stroke(ctx, FINE);
+	if (!s.faces.cut) {
+		stroke(ctx, FINE);
+		return;
+	}
+	ctx.fillStyle = s.faces.cut;
+	ctx.fill();
+	ctx.beginPath();
+	face(c.z0 + 0.6, c.z1 - 0.6, y0 + 0.08, y0 + 0.32);
+	ctx.fillStyle = rgba(s.em, 0.45);
+	ctx.fill();
 }
 
-/* The die: the only colour in the drawing, lit and lettered as it
-   is on the home screen. */
+/* The die. Off, it is drawn like everything else and lettered in
+   the line colour; powered, it fills with the accent and the
+   lettering turns dark on it. No blur: canvas blur is the costliest
+   thing to ask for every frame. */
 function die(ctx, v, c, y, s) {
 	ctx.beginPath();
 	rect(ctx, v, c.x0 - 1.1, c.z0 - 1.1, c.x1 + 1.1, c.z1 + 1.1, y);
 	stroke(ctx, FINE);
 
+	const on = s.power || 0;
 	ctx.beginPath();
 	rect(ctx, v, c.x0, c.z0, c.x1, c.z1, y);
-	ctx.save();
-	ctx.shadowColor = rgba(s.em, 0.55);
-	ctx.shadowBlur = 26 * s.dpr;
-	ctx.fillStyle = rgba(s.em, 0.92);
-	ctx.fill();
-	ctx.restore();
+	if (on > 0.003) {
+		ctx.fillStyle = rgba(s.em, 0.92 * on);
+		ctx.fill();
+	}
+	stroke(ctx, CHIP);
+	accent(ctx, c.i, s);
+	if (on > 0.003 && s.glow) {
+		// the light off it: one stamp, not a blur
+		project(v, c.cx, y, c.cz, 1, O);
+		project(v, c.x0, y, c.z0, 1, U);
+		const r = 2.4 * Math.hypot(U[0] - O[0], U[1] - O[1]);
+		ctx.save();
+		ctx.globalCompositeOperation = 'lighter';
+		ctx.globalAlpha = 0.55 * on;
+		ctx.drawImage(s.glow, O[0] - r, O[1] - r, 2 * r, 2 * r);
+		ctx.restore();
+	}
 
 	if (!s.mark) return;
 	project(v, c.cx, y, c.cz, 1, O);
@@ -267,6 +377,17 @@ function die(ctx, v, c, y, s) {
 	const uy = U[1] - O[1];
 	const nx = N[0] - O[0];
 	const ny = N[1] - O[1];
+	ctx.save();
+	if (s.mark.logo) {
+		// square on the die, most of its width
+		const img = s.mark.logo;
+		const size = (c.x1 - c.x0) * 0.62;
+		const k = (s.dpr * size) / Math.max(img.width, img.height);
+		ctx.setTransform(ux * k, uy * k, nx * k, ny * k, O[0] * s.dpr, O[1] * s.dpr);
+		ctx.drawImage(img, -img.width / 2, -img.height / 2);
+		ctx.restore();
+		return;
+	}
 	const room = (c.x1 - c.x0) * 0.82;
 	const text = (t, weight, size, at) => {
 		ctx.font = `${weight} 100px ${s.font}`;
@@ -275,14 +396,24 @@ function die(ctx, v, c, y, s) {
 		ctx.setTransform(ux * k, uy * k, nx * k, ny * k, (O[0] + nx * at) * s.dpr, (O[1] + ny * at) * s.dpr);
 		ctx.fillText(t, 0, 0);
 	};
-	ctx.save();
-	ctx.fillStyle = INK;
+	ctx.fillStyle = on > 0.5 ? INK : LETTER;
 	ctx.textAlign = 'center';
 	ctx.textBaseline = 'middle';
 	if (s.mark.maker) text(s.mark.maker.toUpperCase(), 600, 0.7, -3.1);
 	text(s.mark.name.toUpperCase(), 800, 1.9, -0.2);
 	if (s.mark.part) text(s.mark.part, 600, 0.65, 2.9);
 	ctx.restore();
+}
+
+/* The chip in focus outlined in the accent, the ones it is wired to
+   more faintly, over the current path. */
+function accent(ctx, i, s) {
+	if (!s.lit) return;
+	const t = s.lit.cell === i ? 1 : s.lit.cells.has(i) ? 0.4 : 0;
+	if (!t) return;
+	ctx.strokeStyle = rgba(s.em, 0.35 + 0.65 * t);
+	ctx.lineWidth = 1.2;
+	ctx.stroke();
 }
 
 /* ---- labels -------------------------------------------------- */
@@ -327,26 +458,38 @@ function depth(v, x, z) {
 }
 
 /* A box in line art: the sides that face you, then the top, each
-   filled with the ground so whatever sits behind it is hidden. The
-   top is drawn in `topW`, the sides in `sideW` ([width, alpha]). */
-function solid(ctx, v, x0, z0, x1, z1, y0, y1, topW, sideW, bg = BG) {
+   filled (`faces`: { top, side }) so whatever sits behind it is
+   hidden. The top is drawn in `topW`, the sides in `sideW` ([width,
+   alpha]). */
+function solid(ctx, v, x0, z0, x1, z1, y0, y1, topW, sideW, faces) {
 	const xs = [x0, x1, x1, x0];
 	const zs = [z0, z0, z1, z1];
 	for (let i = 0; i < 4; i++) {
 		project(v, xs[i], y0, zs[i], 1, LO[i]);
 		project(v, xs[i], y1, zs[i], 1, HI[i]);
 	}
-	ctx.fillStyle = bg;
 	if (y1 - y0 > 0.001) {
+		// the side turned most toward you takes the front grey
+		let most = -1;
+		let best = 0.001;
+		for (let i = 0; i < 4; i++) {
+			const f = SIDES[i][0] * v.sa + SIDES[i][1] * v.ca;
+			if (f > best) {
+				best = f;
+				most = i;
+			}
+		}
 		for (let i = 0; i < 4; i++) {
 			if (SIDES[i][0] * v.sa + SIDES[i][1] * v.ca <= 0.001) continue;
 			const j = (i + 1) % 4;
 			quad(ctx, LO[i], LO[j], HI[j], HI[i]);
+			ctx.fillStyle = i === most ? faces.front : faces.side;
 			ctx.fill();
 			stroke(ctx, sideW);
 		}
 	}
 	quad(ctx, HI[0], HI[1], HI[2], HI[3]);
+	ctx.fillStyle = faces.top;
 	ctx.fill();
 	stroke(ctx, topW);
 }

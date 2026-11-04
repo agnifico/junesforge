@@ -528,6 +528,7 @@
 		padding: 0;
 		box-sizing: border-box;
 		-webkit-font-smoothing: antialiased;
+		-moz-osx-font-smoothing: grayscale;
 	}
 	/* The rail's actual scroll container — see the rail/slides section below
 	   for why it lives here instead of on an inner div. The class is added by
@@ -564,8 +565,8 @@
 		   which is what an accent is for.
 
 		   --line: divider between regions. --edge: rim on a raised surface. */
-		--line: #26292b;
-		--edge: #2e3235;
+		--line: #2b2f31;
+		--edge: #34383b;
 		/* One-pixel top highlight, as if lit from above. The cheapest way to
 		   make a dark surface read as a physical panel instead of a rectangle
 		   with a border around it. */
@@ -907,7 +908,7 @@
 	.info-card {
 		padding: 20px;
 		background: #202224;
-		border: 1px solid var(--line);
+		border: 1px solid var(--edge);
 		border-radius: 10px;
 		box-shadow: var(--lift);
 	}
@@ -984,7 +985,7 @@
 		width: 290px;
 		display: flex;
 		flex-direction: column;
-		border: 1px solid var(--line);
+		border: 1px solid var(--edge);
 		border-radius: 10px;
 		background: #202224;
 		overflow: hidden;

@@ -1663,6 +1663,12 @@
 .propsize-shell .mini-btn:active {
 	background: var(--bg-2);
 }
+/* A mini-btn used as a toggle, lit when its axis is armed. */
+.propsize-shell .mini-btn.on {
+	border-color: var(--brass);
+	color: var(--brass);
+	background: var(--bg-2);
+}
 .propsize-shell .seg {
 	display: flex;
 	border: 1px solid var(--edge);

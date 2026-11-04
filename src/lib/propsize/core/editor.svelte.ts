@@ -73,6 +73,11 @@ class EditorStore {
 	modelPropRadius = $state(1);
 	toastMsg = $state('');
 	materialClipboard = $state<MaterialSpec | null>(null);
+	/** Dimensions copied off one object, ready to paste onto others. Same shape
+	 *  as the material clipboard above, and deliberately the same interaction:
+	 *  read a size off the thing that already fits, put it on the thing that
+	 *  has to fit beside it. */
+	dimensionClipboard = $state<{ x: number; y: number; z: number; from: string } | null>(null);
 	recentColors = $state<string[]>([]);
 
 	snapVal(v: number) {

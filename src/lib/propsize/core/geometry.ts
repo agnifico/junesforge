@@ -389,3 +389,144 @@ export function defaultGroundY(type: PrimitiveType) {
 	if ('radius' in def && typeof def.radius === 'number') return def.radius * 0.75;
 	return 0.6;
 }
+
+// ---- applying scale into geometry parameters --------------------------------
+
+/**
+ * Folding a scale factor into a primitive's own parameters, so a box you
+ * stretched to twice its width reports as a wider box at scale 1 rather than a
+ * 1-wide box with a 2 in it.
+ *
+ * This is Blender's Apply Scale, except better suited to what Propsize stores:
+ * Blender has to bake the factor into mesh data, while a parametric primitive
+ * can simply carry a bigger number and stay parametric. The Inspector then
+ * reads true dimensions, exported code carries honest constructor arguments,
+ * and stacking a second part on top stops requiring mental arithmetic.
+ *
+ * Not every primitive can express every scale. A sphere has one radius, so it
+ * can absorb a uniform scale and nothing else; a cylinder's radius spans both X
+ * and Z, so those two factors have to agree. Rather than silently approximating
+ * (which would change the model's shape behind the user's back) an absorber
+ * returns false and the caller reports what it skipped and why.
+ */
+const NEAR = 1e-4;
+const near = (a: number, b: number) => Math.abs(a - b) <= NEAR * Math.max(1, Math.abs(a), Math.abs(b));
+
+type Scale3 = { x: number; y: number; z: number };
+
+function mul(geo: GeometryParams, key: string, k: number) {
+	const v = geo[key];
+	if (typeof v === 'number') geo[key] = v * k;
+}
+
+function scaleProfile(geo: GeometryParams, key: string, sx: number, sy: number) {
+	const p = geo[key];
+	if (!isProfile(p)) return;
+	const pt = (v: { x: number; y: number }) => ({ x: v.x * sx, y: v.y * sy });
+	geo[key] = {
+		start: pt(p.start),
+		closed: p.closed,
+		segments: p.segments.map((seg) => {
+			if (seg.type === 'line') return { type: 'line' as const, to: pt(seg.to) };
+			if (seg.type === 'quad')
+				return { type: 'quad' as const, ctrl: pt(seg.ctrl), to: pt(seg.to) };
+			return { type: 'cubic' as const, c1: pt(seg.c1), c2: pt(seg.c2), to: pt(seg.to) };
+		})
+	} satisfies Profile;
+}
+
+/** Why a primitive refused a scale, phrased for a toast. */
+export type AbsorbFailure = 'uniform' | 'radial-xz' | 'radial-xy' | 'flat-z';
+
+export const ABSORB_REASON: Record<AbsorbFailure, string> = {
+	uniform: 'needs the same scale on all three axes',
+	'radial-xz': 'needs matching X and Z scale (its radius spans both)',
+	'radial-xy': 'needs matching X and Y scale (its radius spans both)',
+	'flat-z': 'is flat, so it cannot absorb a Z scale'
+};
+
+/**
+ * Fold `s` into `geo` in place. Returns null on success, or the reason it
+ * could not be done. `geo` is left untouched on failure.
+ */
+export function absorbScale(
+	type: PrimitiveType,
+	geo: GeometryParams,
+	s: Scale3
+): AbsorbFailure | null {
+	const uniform = near(s.x, s.y) && near(s.y, s.z);
+	const radialXZ = near(s.x, s.z);
+	const radialXY = near(s.x, s.y);
+
+	switch (type) {
+		// Independent per-axis extents: absorbs anything.
+		case 'box':
+			mul(geo, 'width', s.x);
+			mul(geo, 'height', s.y);
+			mul(geo, 'depth', s.z);
+			return null;
+
+		// Flat in XY, no depth to scale.
+		case 'plane':
+			if (!near(s.z, 1)) return 'flat-z';
+			mul(geo, 'width', s.x);
+			mul(geo, 'height', s.y);
+			return null;
+
+		// Round in XY.
+		case 'circle':
+			if (!radialXY) return 'radial-xy';
+			if (!near(s.z, 1)) return 'flat-z';
+			mul(geo, 'radius', s.x);
+			return null;
+		case 'ring':
+			if (!radialXY) return 'radial-xy';
+			if (!near(s.z, 1)) return 'flat-z';
+			mul(geo, 'innerRadius', s.x);
+			mul(geo, 'outerRadius', s.x);
+			return null;
+
+		// Axis along Y, round in XZ.
+		case 'cylinder':
+			if (!radialXZ) return 'radial-xz';
+			mul(geo, 'radiusTop', s.x);
+			mul(geo, 'radiusBottom', s.x);
+			mul(geo, 'height', s.y);
+			return null;
+		case 'cone':
+		case 'capsule':
+			if (!radialXZ) return 'radial-xz';
+			mul(geo, 'radius', s.x);
+			mul(geo, 'height', s.y);
+			return null;
+
+		// A revolved profile: x is radius, y is height.
+		case 'lathe':
+			if (!radialXZ) return 'radial-xz';
+			scaleProfile(geo, 'profile', s.x, s.y);
+			return null;
+
+		// A 2D outline in XY pushed along Z.
+		case 'extrude':
+			scaleProfile(geo, 'profile', s.x, s.y);
+			mul(geo, 'depth', s.z);
+			return null;
+
+		// One radius, so nothing but a uniform scale fits.
+		case 'sphere':
+		case 'icosa':
+		case 'octa':
+		case 'dodeca':
+		case 'tetra':
+			if (!uniform) return 'uniform';
+			mul(geo, 'radius', s.x);
+			return null;
+		case 'torus':
+		case 'torusKnot':
+			if (!uniform) return 'uniform';
+			mul(geo, 'radius', s.x);
+			mul(geo, 'tube', s.x);
+			return null;
+	}
+	return 'uniform';
+}

@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { docStore } from './document.svelte';
 import { editorStore } from './editor.svelte';
 import type { GizmoMode } from './editor.svelte';
-import { GEO_DEFS, defaultGroundY } from './geometry';
+import { GEO_DEFS, defaultGroundY, absorbScale, ABSORB_REASON } from './geometry';
 import { defaultMaterial, buildThreeMaterial, updateMaterialInPlace } from './materials';
 import { randomPaletteColor } from './palette';
 import { defaultTransform, round3, D2R, R2D } from './utils';
@@ -66,6 +66,13 @@ type Axis = 'x' | 'y' | 'z';
  * $state field like the material clipboard) has to be snapshotted first.
  * Every material copy in here goes through this.
  */
+/** Close enough to 1 that treating it as unscaled is honest. Scale values
+ *  arrive from gizmo drags and matrix decomposition, so exact equality never
+ *  holds even when nothing has actually changed. */
+function near1(v: number) {
+	return Math.abs(v - 1) < 1e-4;
+}
+
 function copyOf<T>(value: T): T {
 	return structuredClone($state.snapshot(value)) as T;
 }
@@ -245,6 +252,12 @@ export class SceneEngine {
 
 	/** Viewport HUD data â the one piece of engine state the template reads. */
 	specPlate = $state<SpecPlateData>(null);
+	/**
+	 * The single selected object's dimensions, republished on every sync so the
+	 * Inspector's Dimensions field and the viewport plate both read live during
+	 * a gizmo drag. Null for an empty or multiple selection.
+	 */
+	selectionDims = $state<{ x: number; y: number; z: number } | null>(null);
 	modelSelCount = $state(0);
 	modelVertCount = $state(0);
 	modelFaceCount = $state(0);
@@ -1731,6 +1744,12 @@ export class SceneEngine {
 		}
 		const size = box.getSize(new THREE.Vector3());
 		const single = docStore.selectedIds.length === 1 ? docStore.node(docStore.selectedIds[0]) : null;
+		// Measured along the object's own axes for a single selection: the world
+		// box grows when you rotate something, which makes it look like the
+		// object changed size when it didn't. A multi-selection has no shared
+		// set of axes, so there the world box genuinely is the extent.
+		const own = single ? this.dimensionsOf(single) : null;
+		this.selectionDims = own ? { x: own.x, y: own.y, z: own.z } : null;
 		const rows: [string, string][] = [];
 		if (single) {
 			const typeLabel = isGroup(single)
@@ -1747,7 +1766,8 @@ export class SceneEngine {
 			rows.push(['meshes', String(meshes.length)]);
 		}
 		rows.push(['tris', String(tris)]);
-		rows.push(['size', `${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)}`]);
+		const shown = own ?? size;
+		rows.push(['size', `${shown.x.toFixed(2)} × ${shown.y.toFixed(2)} × ${shown.z.toFixed(2)}`]);
 		if (single) {
 			const p = single.transform.position;
 			rows.push(['pos', `${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`]);
@@ -2230,12 +2250,12 @@ export class SceneEngine {
 		if (sameParent && beforeId === null) return;
 
 		docStore.mark(null);
-		const worlds = new Map<string, THREE.Vector3>();
+		const worlds = new Map<string, THREE.Matrix4>();
 		for (const n of moving) {
 			const obj = this.threeObjects.get(n.id);
 			if (!obj) continue;
 			obj.updateWorldMatrix(true, false);
-			worlds.set(n.id, obj.getWorldPosition(new THREE.Vector3()));
+			worlds.set(n.id, obj.matrixWorld.clone());
 		}
 
 		for (const n of moving) {
@@ -2244,41 +2264,277 @@ export class SceneEngine {
 		}
 
 		this.syncScene();
+		let sheared = 0;
 		for (const n of moving) {
 			const world = worlds.get(n.id);
 			if (!world) continue;
 			const obj = this.threeObjects.get(n.id);
 			const parent = obj?.parent ?? this.sceneRoot;
-			parent.updateWorldMatrix(true, false);
-			const local = parent.worldToLocal(world.clone());
-			n.transform.position = { x: round3(local.x), y: round3(local.y), z: round3(local.z) };
+			const res = this.#localTransformIn(world, parent);
+			n.transform = res.transform;
+			if (res.sheared) sheared++;
 		}
 
 		this.requestSync();
-		editorStore.toast(moving.length === 1 ? 'Moved in hierarchy' : `Moved ${moving.length} objects`);
+		if (sheared) {
+			editorStore.toast(
+				`Moved \u2014 but ${sheared === 1 ? 'one object' : sheared + ' objects'} changed shape: a rotated object can't keep its exact form under a non-uniformly scaled parent`
+			);
+		} else {
+			editorStore.toast(moving.length === 1 ? 'Moved in hierarchy' : `Moved ${moving.length} objects`);
+		}
 	}
 
-	reparentNode(id: string, newParentId: string | null) {
-		const node = docStore.node(id);
-		if (!node || (node.parentId ?? null) === (newParentId ?? null)) return;
-		docStore.mark(null);
-		const obj = this.threeObjects.get(id);
-		let world: THREE.Vector3 | null = null;
-		if (obj) {
-			obj.updateWorldMatrix(true, false);
-			world = obj.getWorldPosition(new THREE.Vector3());
+	/**
+	 * Express a world matrix in `parentObj`'s space as a position/rotation/scale
+	 * triple.
+	 *
+	 * Reparenting is an organizational act, not a spatial one: dragging a row in
+	 * the tree must not move the object on screen. That means the *whole* matrix
+	 * has to make the trip. Capturing world position alone (what this used to do)
+	 * left rotation and scale as raw local values, so a child dragged out of a
+	 * rotated group kept its old local rotation while inheriting the new parent's
+	 * on top of it, and visibly jumped by the difference between the two.
+	 *
+	 * Same maths as groupSelection(), which already got this right.
+	 */
+	#localTransformIn(world: THREE.Matrix4, parentObj: THREE.Object3D) {
+		parentObj.updateWorldMatrix(true, false);
+		const local = new THREE.Matrix4().copy(parentObj.matrixWorld).invert().multiply(world);
+		const pos = new THREE.Vector3();
+		const quat = new THREE.Quaternion();
+		const scl = new THREE.Vector3();
+		local.decompose(pos, quat, scl);
+		const euler = new THREE.Euler().setFromQuaternion(quat, 'XYZ');
+		// A position/rotation/scale triple cannot express shear, and shear is
+		// exactly what a rotated object under a non-uniformly scaled parent
+		// needs. decompose() approximates silently in that case, so recompose
+		// and compare: if the round trip doesn't land back where it started,
+		// the object really did change shape and the caller should say so.
+		const rebuilt = new THREE.Matrix4().compose(pos, quat, scl);
+		let sheared = false;
+		for (let i = 0; i < 16; i++) {
+			if (Math.abs(rebuilt.elements[i] - local.elements[i]) > 1e-3) {
+				sheared = true;
+				break;
+			}
 		}
-		docStore.reparent(id, newParentId, () => {
-			if (!world) return null;
-			this.syncScene();
-			const o2 = this.threeObjects.get(id);
-			const parent = (o2 && o2.parent) || this.sceneRoot;
-			parent.updateWorldMatrix(true, false);
-			const local = parent.worldToLocal(world.clone());
-			return { x: round3(local.x), y: round3(local.y), z: round3(local.z) };
+		return {
+			transform: {
+				position: { x: round3(pos.x), y: round3(pos.y), z: round3(pos.z) },
+				rotation: { x: round3(R2D(euler.x)), y: round3(R2D(euler.y)), z: round3(R2D(euler.z)) },
+				scale: { x: round3(scl.x), y: round3(scl.y), z: round3(scl.z) }
+			},
+			sheared
+		};
+	}
+
+	/** One reparent path, not two. This used to carry its own copy of the
+	 *  world-transform maths, and its own copy of the bug in it. */
+	reparentNode(id: string, newParentId: string | null) {
+		this.moveNodes([id], newParentId);
+	}
+
+	// ---- dimensions -----------------------------------------------------------
+	/**
+	 * The node's bounding box in its *own* local space — its own transform
+	 * removed, its children's kept. Multiplied by the node's scale this is what
+	 * a person means by "how big is this thing", which is why it is the basis
+	 * for the Dimensions field rather than the world box.
+	 *
+	 * The world box is the wrong number for that job: rotate a 1x1x1 box by 45
+	 * degrees and its world box grows to 1.41 wide without the object changing
+	 * size at all. Measuring along the object's own axes keeps the reading
+	 * stable under rotation, which matches what Blender's N-panel shows.
+	 */
+	localSizeOf(node: SceneNode): THREE.Vector3 | null {
+		const obj = this.threeObjects.get(node.id);
+		if (!obj) return null;
+		obj.updateWorldMatrix(true, true);
+		const toLocal = new THREE.Matrix4().copy(obj.matrixWorld).invert();
+		const box = new THREE.Box3();
+		obj.traverse((o) => {
+			const mesh = o as THREE.Mesh;
+			if (!(mesh as unknown as { isMesh?: boolean }).isMesh || !mesh.geometry) return;
+			if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+			const b = mesh.geometry.boundingBox;
+			if (!b) return;
+			box.union(
+				b.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(toLocal, mesh.matrixWorld))
+			);
 		});
+		if (box.isEmpty()) return null;
+		return box.getSize(new THREE.Vector3());
+	}
+
+	/** What the Dimensions field shows: local size scaled by the node's own
+	 *  scale. Null when the node has no drawable geometry (an empty group). */
+	dimensionsOf(node: SceneNode): THREE.Vector3 | null {
+		const local = this.localSizeOf(node);
+		if (!local) return null;
+		const t = node.transform.scale;
+		return new THREE.Vector3(
+			local.x * Math.abs(t.x),
+			local.y * Math.abs(t.y),
+			local.z * Math.abs(t.z)
+		);
+	}
+
+	/**
+	 * Drive one axis to an exact size by solving for scale. This is the whole
+	 * point of the field: you know the number you want, so type it instead of
+	 * working out the factor that produces it.
+	 *
+	 * Sign is preserved so a mirrored object stays mirrored, and a zero-extent
+	 * axis (a plane has no thickness) is left alone rather than dividing by it.
+	 */
+	setDimension(node: SceneNode, axis: Axis, value: number) {
+		const local = this.localSizeOf(node);
+		if (!local || !Number.isFinite(value) || value <= 0) return;
+		const base = local[axis];
+		if (base <= 1e-6) {
+			editorStore.toast(`${node.name} has no measurable size on ${axis.toUpperCase()}`);
+			return;
+		}
+		docStore.mark(`dim:${node.id}:${axis}`);
+		const sign = node.transform.scale[axis] < 0 ? -1 : 1;
+		node.transform.scale[axis] = round3((value / base) * sign);
+		this.syncLinked(node);
 		this.requestSync();
-		editorStore.toast('Moved in hierarchy');
+	}
+
+	/**
+	 * Fold each selected primitive's scale into its own geometry parameters and
+	 * reset the scale to 1. Blender's Apply Scale, except a parametric
+	 * primitive can carry the result as a bigger number instead of baking it
+	 * into mesh data, so the shape stays editable and the exported constructor
+	 * arguments stay honest.
+	 *
+	 * Primitives that cannot express the scale they were given are left exactly
+	 * as they are and named in the toast, rather than being quietly
+	 * approximated into a slightly wrong shape.
+	 */
+	applyScaleToSelection() {
+		const targets = docStore.selectionRoots();
+		if (!targets.length) return;
+		const skipped: string[] = [];
+		let applied = 0;
+		docStore.mark(null);
+		for (const node of targets) {
+			const s = node.transform.scale;
+			if (near1(s.x) && near1(s.y) && near1(s.z)) continue;
+			if (!isPrimitive(node)) {
+				skipped.push(`${node.name} is ${isGroup(node) ? 'a group' : 'not parametric'}`);
+				continue;
+			}
+			const geo = copyOf(node.geometry);
+			const fail = absorbScale(node.type, geo, s);
+			if (fail) {
+				skipped.push(`${node.name} ${ABSORB_REASON[fail]}`);
+				continue;
+			}
+			node.geometry = geo;
+			node.transform.scale = { x: 1, y: 1, z: 1 };
+			this.propagateLinked(node);
+			applied++;
+		}
+		this.requestSync();
+		if (!applied && !skipped.length) {
+			editorStore.toast('Nothing to apply — scale is already 1');
+		} else if (!skipped.length) {
+			editorStore.toast(`Applied scale to ${applied} object${applied === 1 ? '' : 's'}`);
+		} else {
+			editorStore.toast(
+				`${applied ? `Applied to ${applied}. ` : ''}Skipped: ${skipped.slice(0, 2).join('; ')}${skipped.length > 2 ? ` (+${skipped.length - 2} more)` : ''}`
+			);
+		}
+	}
+
+	/** Read a size off the object that already fits, so it can be put on the
+	 *  one that has to fit beside it. */
+	copyDimensionsFrom(node: SceneNode) {
+		const d = this.dimensionsOf(node);
+		if (!d) {
+			editorStore.toast(`${node.name} has no measurable size`);
+			return;
+		}
+		editorStore.dimensionClipboard = {
+			x: round3(d.x),
+			y: round3(d.y),
+			z: round3(d.z),
+			from: node.name
+		};
+		editorStore.toast(`Copied ${round3(d.x)} x ${round3(d.y)} x ${round3(d.z)} from ${node.name}`);
+	}
+
+	/** Paste only the axes that are ticked — matching a cylinder's radius
+	 *  without also forcing its height is the common case, not the exception. */
+	pasteDimensionsToSelection(axes: { x: boolean; y: boolean; z: boolean }) {
+		const clip = editorStore.dimensionClipboard;
+		if (!clip) return;
+		if (!axes.x && !axes.y && !axes.z) {
+			editorStore.toast('Pick at least one axis to paste');
+			return;
+		}
+		const targets = docStore.selectionRoots();
+		if (!targets.length) return;
+		docStore.mark(null);
+		let n = 0;
+		for (const node of targets) {
+			const local = this.localSizeOf(node);
+			if (!local) continue;
+			let touched = false;
+			for (const a of ['x', 'y', 'z'] as Axis[]) {
+				if (!axes[a] || local[a] <= 1e-6) continue;
+				const sign = node.transform.scale[a] < 0 ? -1 : 1;
+				node.transform.scale[a] = round3((clip[a] / local[a]) * sign);
+				touched = true;
+			}
+			if (touched) {
+				this.propagateLinked(node);
+				n++;
+			}
+		}
+		this.requestSync();
+		editorStore.toast(n ? `Sized ${n} object${n === 1 ? '' : 's'} to match ${clip.from}` : 'Nothing resized');
+	}
+
+	/**
+	 * Round each selected object's dimensions to the nearest snap step. The
+	 * point is kit pieces that actually tile: a palisade section measured at
+	 * 1.97 units leaves a seam every time it repeats, and no amount of careful
+	 * placement fixes a length that isn't a whole number of steps.
+	 */
+	roundDimensionsToStep() {
+		const step = editorStore.snapStep;
+		if (!(step > 0)) return;
+		const targets = docStore.selectionRoots();
+		if (!targets.length) return;
+		docStore.mark(null);
+		let n = 0;
+		for (const node of targets) {
+			const local = this.localSizeOf(node);
+			if (!local) continue;
+			let touched = false;
+			for (const a of ['x', 'y', 'z'] as Axis[]) {
+				if (local[a] <= 1e-6) continue;
+				const current = local[a] * Math.abs(node.transform.scale[a]);
+				// Never round a real object down to nothing.
+				const target = Math.max(step, Math.round(current / step) * step);
+				if (near1(target / current)) continue;
+				const sign = node.transform.scale[a] < 0 ? -1 : 1;
+				node.transform.scale[a] = round3((target / local[a]) * sign);
+				touched = true;
+			}
+			if (touched) {
+				this.propagateLinked(node);
+				n++;
+			}
+		}
+		this.requestSync();
+		editorStore.toast(
+			n ? `Rounded ${n} object${n === 1 ? '' : 's'} to ${step}-unit steps` : `Already on ${step}-unit steps`
+		);
 	}
 
 	// ---- world-space helpers --------------------------------------------------

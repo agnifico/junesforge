@@ -21,6 +21,10 @@
 	let { engine }: { engine: SceneEngine } = $props();
 	let insetAmt = $state(0.2);
 	let bevelAmt = $state(0.15);
+	/** Which axes a dimension paste writes. Matching a cylinder's radius
+	 *  without also forcing its height is the common case, so these are
+	 *  individually armable rather than all-or-nothing. */
+	let pasteAxes = $state({ x: true, y: true, z: true });
 
 	let selected = $derived(
 		docStore.selectedIds.map((id) => docStore.node(id)).filter((n): n is SceneNode => !!n)
@@ -176,6 +180,44 @@
 			onLockToggle={(axis) => editorStore.toggleScaleLink(axis)}
 			onchange={(axis, v) => setScale(node, axis, v)}
 		/>
+		{#if engine.selectionDims}
+			<FieldMiniNumbers
+				label="Dimensions"
+				triple={engine.selectionDims}
+				step={0.1}
+				onchange={(axis, v) => engine.setDimension(node, axis, v)}
+			/>
+			<BtnRow
+				buttons={[
+					{
+						label: 'Apply scale',
+						title: 'Fold the scale into the shape itself and reset scale to 1',
+						onClick: () => engine.applyScaleToSelection()
+					},
+					{
+						label: 'Copy size',
+						title: 'Copy these dimensions, to size another object to match',
+						onClick: () => engine.copyDimensionsFrom(node)
+					},
+					{
+						label: `Round ${editorStore.snapStep}`,
+						title: `Round dimensions to whole ${editorStore.snapStep}-unit steps so kit pieces tile`,
+						onClick: () => engine.roundDimensionsToStep()
+					}
+				]}
+			/>
+			{#if editorStore.dimensionClipboard}
+				<BtnRow
+					label={`Paste size from ${editorStore.dimensionClipboard.from}`}
+					buttons={[
+						{ label: 'X', active: pasteAxes.x, onClick: () => (pasteAxes.x = !pasteAxes.x) },
+						{ label: 'Y', active: pasteAxes.y, onClick: () => (pasteAxes.y = !pasteAxes.y) },
+						{ label: 'Z', active: pasteAxes.z, onClick: () => (pasteAxes.z = !pasteAxes.z) },
+						{ label: 'Paste', onClick: () => engine.pasteDimensionsToSelection(pasteAxes) }
+					]}
+				/>
+			{/if}
+		{/if}
 		<BtnRow
 			label="Flip across plane"
 			buttons={[
@@ -784,6 +826,32 @@
 				{ label: '×2', onClick: () => scaleAll(roots, 2) }
 			]}
 		/>
+		<BtnRow
+			label="Size"
+			buttons={[
+				{
+					label: 'Apply scale',
+					title: 'Fold each scale into its own shape and reset scale to 1',
+					onClick: () => engine.applyScaleToSelection()
+				},
+				{
+					label: `Round ${editorStore.snapStep}`,
+					title: `Round every dimension to whole ${editorStore.snapStep}-unit steps`,
+					onClick: () => engine.roundDimensionsToStep()
+				}
+			]}
+		/>
+		{#if editorStore.dimensionClipboard}
+			<BtnRow
+				label={`Paste size from ${editorStore.dimensionClipboard.from}`}
+				buttons={[
+					{ label: 'X', active: pasteAxes.x, onClick: () => (pasteAxes.x = !pasteAxes.x) },
+					{ label: 'Y', active: pasteAxes.y, onClick: () => (pasteAxes.y = !pasteAxes.y) },
+					{ label: 'Z', active: pasteAxes.z, onClick: () => (pasteAxes.z = !pasteAxes.z) },
+					{ label: 'Paste', onClick: () => engine.pasteDimensionsToSelection(pasteAxes) }
+				]}
+			/>
+		{/if}
 		<BtnRow
 			label="Flip across plane"
 			buttons={[

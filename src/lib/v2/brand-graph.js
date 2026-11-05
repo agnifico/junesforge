@@ -1,6 +1,6 @@
 /* =============================================================
    BRAND GRAPH — everything an agency makes for a brand, as objects.
-   Source data for the board on /next (screen 02).
+   Source data for the board on / (screen 02).
 
    The model: a brand is one object. Every other node is derived
    from it, and `from` lists the objects whose values it takes

@@ -1,5 +1,5 @@
 /* =============================================================
-   STUDIO — stylesheet for the scrolling home at /next.
+   STUDIO — stylesheet for the scrolling home at /.
    Loaded after theme.css. Two jobs:
    1. Re-seat the deck's screens in normal document flow, so the
       locked Design / Code / Contact panels render exactly as they
@@ -211,9 +211,47 @@
 	outline-color: var(--em);
 }
 
+/* Hovering (or tabbing to) a pip names the screen it goes to, set
+   horizontally to its left. The current pip already has the vertical
+   label, so it gets none. */
+.jf-studio .jf-rail button {
+	position: relative;
+}
+.jf-studio .jf-rail .jf-rail-tip {
+	position: absolute;
+	right: 100%;
+	top: 50%;
+	transform: translate(6px, -50%);
+	padding: 5px 8px;
+	font-family: var(--mono);
+	font-size: 9.5px;
+	letter-spacing: 0.2em;
+	text-transform: uppercase;
+	white-space: nowrap;
+	color: var(--s-white);
+	background: var(--s-black);
+	border: 1px solid var(--s-line);
+	pointer-events: none;
+	opacity: 0;
+	transition:
+		opacity 0.18s ease,
+		transform 0.18s ease;
+}
+.jf-studio .jf-rail.on-light .jf-rail-tip {
+	color: var(--s-black);
+	background: var(--s-white);
+	border-color: var(--s-line-dk);
+}
+.jf-studio .jf-rail button:hover .jf-rail-tip,
+.jf-studio .jf-rail button:focus-visible .jf-rail-tip {
+	opacity: 1;
+	transform: translate(0, -50%);
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.jf-s-btn,
-	.jf-s-float {
+	.jf-s-float,
+	.jf-studio .jf-rail .jf-rail-tip {
 		transition-duration: 1ms;
 	}
 }

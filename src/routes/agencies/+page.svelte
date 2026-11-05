@@ -39,8 +39,6 @@
 <svelte:head>
 	<title>{c.meta.title}</title>
 	<meta name="description" content={c.meta.description} />
-	<!-- Staging, like /next: out of search until it goes live. -->
-	<meta name="robots" content="noindex" />
 	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 	<link rel="preconnect" href="https://fonts.googleapis.com" />
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />

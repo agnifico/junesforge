@@ -72,9 +72,14 @@ export function extents(m) {
      wired   0–1: the traces out of the processor in the accent
      fills   faces in three flat greys in place of the ground, and the
              finest detail as fills and the accent in place of lines
-     mark    { name, maker, part, logo } lettered on the processor's
-             die; with a logo (a canvas, already in the lid's ink) it
-             is drawn in place of the lettering
+     mark    { name, maker, part, logo, shown } lettered on the
+             processor's die; with a logo (a canvas, already in the
+             lid's ink) it is drawn in place of the lettering. `shown`
+             (0–1, default 1) fades the name alone
+     out     an object, or null: where the name sits goes back in
+             out.named, { x, y, ux, uy, nx, ny, span } (its middle on
+             screen, the die's two axes in px per unit, its length in
+             units)
      font, em ([r, g, b]), dpr
      bg      the ground the faces are filled with, so what is behind
              a part is hidden (the page's own, by default)
@@ -389,18 +394,27 @@ function die(ctx, v, c, y, s) {
 		return;
 	}
 	const room = (c.x1 - c.x0) * 0.82;
-	const text = (t, weight, size, at) => {
+	// a line of lettering, `alpha` strong; returns its length on the die
+	const text = (t, weight, size, at, alpha = 1) => {
 		ctx.font = `${weight} 100px ${s.font}`;
-		const fit = Math.min(size, (room * 100) / Math.max(1, ctx.measureText(t).width));
-		const k = (fit / 100) * s.dpr;
-		ctx.setTransform(ux * k, uy * k, nx * k, ny * k, (O[0] + nx * at) * s.dpr, (O[1] + ny * at) * s.dpr);
-		ctx.fillText(t, 0, 0);
+		const w = ctx.measureText(t).width;
+		const fit = Math.min(size, (room * 100) / Math.max(1, w));
+		if (alpha > 0.003) {
+			const k = (fit / 100) * s.dpr;
+			ctx.setTransform(ux * k, uy * k, nx * k, ny * k, (O[0] + nx * at) * s.dpr, (O[1] + ny * at) * s.dpr);
+			ctx.globalAlpha = alpha;
+			ctx.fillText(t, 0, 0);
+		}
+		return (w * fit) / 100;
 	};
 	ctx.fillStyle = on > 0.5 ? INK : LETTER;
 	ctx.textAlign = 'center';
 	ctx.textBaseline = 'middle';
 	if (s.mark.maker) text(s.mark.maker.toUpperCase(), 600, 0.7, -3.1);
-	text(s.mark.name.toUpperCase(), 800, 1.9, -0.2);
+	// The name can be faded (`shown`, 0–1) while the page's own copy of
+	// it lands here; where it sits, and its axes, go back in `s.out`.
+	const span = text(s.mark.name.toUpperCase(), 800, 1.9, -0.2, s.mark.shown ?? 1);
+	if (s.out) s.out.named = { x: O[0] + nx * -0.2, y: O[1] + ny * -0.2, ux, uy, nx, ny, span };
 	if (s.mark.part) text(s.mark.part, 600, 0.65, 2.9);
 	ctx.restore();
 }

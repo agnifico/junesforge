@@ -243,7 +243,7 @@ export const products = {
 			meta: 'Notes app · Solo build',
 			blurb: 'A notes app where what you write grows into a garden of trees.',
 			cta: 'Open the app',
-			href: 'https://arboreum-v1.vercel.app',
+			href: 'https://arboreum-v2.vercel.app',
 			src: '/images/products/arboreum.jpg',
 			tone: 'jade'
 		}
@@ -373,7 +373,7 @@ export const contact = {
 };
 
 /* =============================================================
-   STUDIO — the freelance-facing home at /next.
+   STUDIO — the freelance-facing home at /.
    The deck above is still what `/` renders. Design, Code and
    Contact are shared and locked; everything below is new.
    Lines marked REVIEW are provisional claims or numbers that
@@ -403,10 +403,11 @@ export const studioMeta = {
    sit beside the exploded chip on the second screen. */
 export const hero = {
 	nav: [
+		// in page order; Process covers how a project runs and the ways to work together
 		{ label: 'Work', goto: 3 },
-		{ label: 'Packages', goto: 6 },
 		{ label: 'Process', goto: 5 },
-		{ label: 'FAQ', goto: 6 } // Packages and FAQ now share a screen
+		{ label: 'FAQ', goto: 6, anchor: 'faq' }, // the FAQ sits under the packages
+		{ label: 'Contact', goto: 7 }
 	],
 	// Rendered as two lines; the second takes the accent.
 	headline: ['Agency-grade work.', 'Without the agency.'],
@@ -414,13 +415,14 @@ export const hero = {
 	   of the circuit Agni owns, directs or brings a partner in for is
 	   still to be marked (see the board). */
 	lede:
-		'Junesforge is one person: me. I design and build brands, websites and web apps, working from the whole map you see here, from a brand’s voice to its code. No departments, no handoffs, no contractor you never meet.',
+		'Junesforge is a one person studio. I design and build brands, websites and web apps, with a design thinking that combines my computer science and engineering background, with my artistic vision.',
 	place: 'Bengaluru, India · working with clients anywhere'
 };
 
 /* ---- THE CHIP (the home scene) -----------------------------
-   The home scene (panels/Board.svelte) opens on two words and the
-   circuit; scrolled, it takes the circuit apart beside the hero's
+   The home scene (panels/Board.svelte) opens on two words, then the
+   chip's name (chip.name below), which flies onto the processor as
+   the page scrolls; then it takes the circuit apart beside the hero's
    claim above (panels/Claim.svelte). Pillar names and their cards
    are in brand-graph.js. */
 export const board = {
@@ -488,17 +490,52 @@ export const work = {
 			image: null,
 			wide: true
 		},
+		/* `images`: with three or more, the card shows the first large
+		   and the next two stacked beside it; with fewer, just the
+		   first. Order them for that. */
 		{
 			kind: 'Client',
-			title: 'Conference identities',
-			type: 'Logo and brand marks',
-			brief: 'Three international events, each needing a mark that works on a lanyard and on a stage screen.',
-			did: 'GCC Conference on Energy Communication, an ESG summit, and the Future Wellbeing Congress.',
-			links: [{ label: 'See them on Dribbble', href: 'https://dribbble.com/jxnesforge' }],
-			strip: [
-				{ src: '/images/GCEC2.jpg', alt: 'GCEC monogram for the GCC Conference on Energy Communication', fit: 'contain' },
-				{ src: '/images/ESG1.png', alt: 'ESG summit banner mark', fit: 'contain' },
-				{ src: '/images/FWC1.png', alt: 'Future Wellbeing Congress butterfly mark', fit: 'cover' }
+			title: 'GCC Conference on Energy Communication',
+			type: 'Event logo',
+			brief: 'An international conference, needing a mark that works on a lanyard and on a stage screen.',
+			did: 'The logo: a GCEC monogram over the full name.',
+			links: [
+				{
+					label: 'See it on Dribbble',
+					href: 'https://dribbble.com/shots/27290153-Event-Logos-5-GCC-Conference-on-Energy-Communication'
+				}
+			],
+			images: [
+				{ src: '/images/work/logos/gcc-energy.webp', alt: 'GCEC monogram over the words GCC Conference on Energy Communication.' }
+			]
+		},
+		{
+			kind: 'Client',
+			title: 'ESG summit',
+			type: 'Event logo',
+			brief: 'An environment summit, needing a mark that works on a lanyard and on a stage screen.',
+			did: 'The logo: a banner mark reading Env Soc Gov.',
+			links: [{ label: 'See it on Dribbble', href: 'https://dribbble.com/shots/27290136-ESG-An-Event-Logo' }],
+			images: [{ src: '/images/work/logos/esg.webp', alt: 'Red banner mark reading Env Soc Gov.' }]
+		},
+		{
+			kind: 'Client',
+			title: 'Future Wellbeing Congress',
+			type: 'Event logo',
+			brief: 'An international congress, needing a mark that works on a lanyard and on a stage screen.',
+			did: 'Two marks: a butterfly, and a rising sun for the 2026 edition.',
+			links: [
+				{
+					label: 'See it on Dribbble',
+					href: 'https://dribbble.com/shots/27290166-Event-Logo-Future-Wellbeing-Congress'
+				}
+			],
+			images: [
+				{
+					src: '/images/work/logos/fwc-butterfly.webp',
+					alt: 'Butterfly mark in greens and orange beside the words Future Wellbeing Congress.'
+				},
+				{ src: '/images/work/logos/fwc-sun.webp', alt: 'Rising-sun mark beside the words Future Wellbeing Congress 2026.' }
 			]
 		},
 		{
@@ -508,7 +545,24 @@ export const work = {
 			brief: 'Measure, resize and refit 3D props to real-world scale, in the browser.',
 			did: 'Product design, the 3D engine, and the editor UI. Built and shipped solo.',
 			links: [{ label: 'Open the tool', href: '/propsize' }],
-			image: '/images/products/propsize.jpg'
+			images: [
+				{
+					src: '/images/work/propsize/propsize-watchtower.jpg',
+					alt: 'A blue and white low-poly watchtower in the Propsize editor, with its parts listed on the left and position, rotation and scale on the right.'
+				},
+				{
+					src: '/images/work/propsize/propsize-library.jpg',
+					alt: 'A snowy pine tree picked from a model library and placed in the scene, inside a sizing box.'
+				},
+				{
+					src: '/images/work/propsize/propsize-tree.jpg',
+					alt: "A snowy pine and a bare birch on a grid, with move arrows and a panel showing the pine's size in metres."
+				},
+				{
+					src: '/images/work/propsize/propsize-modeling.jpg',
+					alt: 'A blocky shape in modeling mode, its corners marked as points and one face highlighted.'
+				}
+			]
 		},
 		{
 			kind: 'Game',
@@ -517,7 +571,28 @@ export const work = {
 			brief: 'A role-playing game in a hand-drawn world, that runs entirely in the browser.',
 			did: 'Quest engine, turn-based combat and the world itself. Built solo, with no backend.',
 			links: [{ label: 'Play it', href: 'https://dawns-journey.vercel.app/' }],
-			image: '/images/products/dawns-journey.jpg'
+			images: [
+				{
+					src: '/images/work/dawns-journey/dj-waterfall.jpg',
+					alt: 'A pixel-art forest where a waterfall steps down into a river, inside the game frame.'
+				},
+				{
+					src: '/images/work/dawns-journey/dj-snow.jpg',
+					alt: 'A snowy pixel-art plaza ringed with ice, under an achievement banner reading Wanderer.'
+				},
+				{
+					src: '/images/work/dawns-journey/dj-character.jpg',
+					alt: "A character's screen: stats down the left, equipped weapons, and a grid of materials."
+				},
+				{
+					src: '/images/work/dawns-journey/dj-combat.jpg',
+					alt: "Turn-based combat: the player's and the enemy's stats side by side, over a bar of skills."
+				},
+				{
+					src: '/images/work/dawns-journey/nuvatra.webp',
+					alt: "Pixel-art map of Nuvatra's main island, with a farm, a forest plateau, a lab and a river running to the sea."
+				}
+			]
 		},
 		{
 			kind: 'Product',
@@ -525,8 +600,25 @@ export const work = {
 			type: 'Notes app · live',
 			brief: 'A notes app where what you write grows into a garden of trees.',
 			did: 'Concept, interface and build, start to finish.',
-			links: [{ label: 'Open the app', href: 'https://arboreum-v1.vercel.app' }],
-			image: '/images/products/arboreum.jpg'
+			links: [{ label: 'Open the app', href: 'https://arboreum-v2.vercel.app' }],
+			images: [
+				{
+					src: '/images/work/arboreum/arboreum-welcome.jpg',
+					alt: "Arboreum's welcome note on a dark screen set into a cream and brown handheld console, with a D-pad, A and B buttons, and a small pixel-art map of trees."
+				},
+				{
+					src: '/images/work/arboreum/arboreum-editor.jpg',
+					alt: 'A note with numbered lists, checkboxes and a code block, above a row of formatting keys styled as console buttons.'
+				},
+				{
+					src: '/images/work/arboreum/arboreum-wide.jpg',
+					alt: "Arboreum's note editor stretched across a wide screen, under the console's camera and nameplate."
+				},
+				{
+					src: '/images/work/arboreum/arboreum-mobile.jpg',
+					alt: 'Arboreum on a phone: the console, upright, with the note on its screen and the D-pad below.'
+				}
+			]
 		},
 		{
 			kind: 'Game',
@@ -535,7 +627,28 @@ export const work = {
 			brief: 'An open world you fly through.',
 			did: 'Built solo, start to finish.',
 			links: [{ label: 'Play it', href: 'https://firefightergirl.vercel.app/' }],
-			image: '/images/products/firefighter-girl.jpg'
+			images: [
+				{
+					src: '/images/work/firefighter-girl/ffg-shallows.jpg',
+					alt: 'Palm-covered sandbars in shallow turquoise water, with a sailing ship on the horizon and rocks floating overhead.'
+				},
+				{
+					src: '/images/work/firefighter-girl/ffg-kallisti.jpg',
+					alt: 'A white-walled hill town above a turquoise bay, with a temple on the cliff and rocks floating overhead.'
+				},
+				{
+					src: '/images/work/firefighter-girl/ffg-takama.jpg',
+					alt: 'A terraced island with a pagoda and a red-railed path up a rock spire, floating above pink clouds.'
+				},
+				{
+					src: '/images/work/firefighter-girl/ffg-dwarka.jpg',
+					alt: 'A sandstone city of domes and lit windows at dusk, with a palace on the skyline.'
+				},
+				{
+					src: '/images/work/firefighter-girl/ffg-fjord.jpg',
+					alt: 'A deep blue fjord between dark cliffs dusted with snow, with flat ice floes on the water.'
+				}
+			]
 		},
 		{
 			kind: 'Game',
@@ -544,7 +657,16 @@ export const work = {
 			brief: 'Top-down tactics on a chequered field: move, hold ground, spend abilities.',
 			did: 'Rules, interface and build. Built solo.',
 			links: [{ label: 'Play it', href: 'https://chessboard-combat.vercel.app/' }],
-			image: '/images/products/chessboard-battlefield.jpg'
+			images: [
+				{
+					src: '/images/work/chessboard/cb-poster.jpg',
+					alt: 'Poster: Maria Elena, in white with fire at her hands, beside the battle grid, under the title Chessboard Battlefield.'
+				},
+				{
+					src: '/images/work/chessboard/cb-battle.jpg',
+					alt: 'A battle on a grid: the team down the left, a green dragon to fight at the top, the combat log on the right.'
+				}
+			]
 		}
 	]
 };
@@ -632,9 +754,9 @@ export const process = {
 
 /* ---- WHY (screen 06) ----------------------------------------
    The agencies argument, on the home page: the receipt (its figures
-   and story are in `versus` below, shared with /next/agencies), each
+   and story are in `versus` below, shared with /agencies), each
    charge against an agency paired with what you get here instead,
-   and the close. The long read stays at /next/agencies. No charge
+   and the close. The long read stays at /agencies. No charge
    rests on Agni being a contractor now: Agni isn't. */
 export const why = {
 	// the premise, over the whole screen
@@ -659,7 +781,7 @@ export const why = {
 			blurb: 'The work above is mine. What I make for you is yours: the code, the domain, every account.'
 		}
 	],
-	more: { label: 'Read the whole argument', href: '/next/agencies' }
+	more: { label: 'Read the whole argument', href: '/agencies' }
 };
 
 /* ---- 07 · PACKAGES + FAQ (one screen) ----------------------- */
@@ -702,7 +824,7 @@ export const faq = {
 	]
 };
 
-/* ---- VERSUS (/next/agencies) -------------------------------
+/* ---- VERSUS (/agencies) -------------------------------
    The case against the agency model, from someone who has been
    inside agencies and has been the freelancer they call. Every
    claim is first-hand or framed as what Agni saw; no agency or
@@ -775,7 +897,7 @@ export const versus = {
 			'On my home page is how I see marketing: 67 functions, from the brand’s voice to its packaging to its posting schedule, wired into one integrated circuit. It is the map I work from on every project.',
 			'An agency splits that map across five departments and a contractor. Here, one person holds all of it.'
 		],
-		link: { label: 'See the circuit', href: '/next' }
+		link: { label: 'See the circuit', href: '/' }
 	},
 	fair: {
 		label: 'To be fair',
@@ -785,6 +907,6 @@ export const versus = {
 	close: {
 		heading: ['Cut out', 'the middle.'],
 		lede: 'Same work, no markup. You talk to the person building it, from the first call to launch day.',
-		back: { label: 'Back to Junesforge', href: '/next' }
+		back: { label: 'Back to Junesforge', href: '/' }
 	}
 };

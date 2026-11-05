@@ -320,7 +320,7 @@
 
 <!--
 	BACKUP — the portfolio home page as it stood before the v2 deck replaced it
-	on 2026-09-08. Kept whole and reachable at /legacy so copy and layout can be
+	on 2026-09-08. Kept whole and reachable at /legacy1 so copy and layout can be
 	lifted across, but noindex'd so it never competes with `/` in search.
 	Nothing links here; it is reached by typing the URL.
 -->

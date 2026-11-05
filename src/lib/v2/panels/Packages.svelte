@@ -22,7 +22,7 @@
 			{/each}
 		</ol>
 
-		<div class="faq">
+		<div class="faq" id="faq">
 			<div class="intro jf-in">
 				<h2 class="sub">{faq.heading}</h2>
 				<p>{faq.lede}</p>

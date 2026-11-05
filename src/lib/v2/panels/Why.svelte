@@ -4,7 +4,7 @@
 	   Left: the receipt, one number and two bars, with the story
 	   behind "Read what happened". Right: each charge against an
 	   agency, paired with what you get here instead. Under both, the
-	   close. The long read stays at /next/agencies, linked from the
+	   close. The long read stays at /agencies, linked from the
 	   close. Copy: content.js (why; the receipt is versus.receipt,
 	   shared with that page).
 	   ========================================================= */
@@ -24,23 +24,6 @@
 		{ kind: 'fee', v: f.fee }
 	];
 
-	/* A part of a bar too thin for its name shows it in a tag above:
-	   on hover, or while the bars have focus (a tap, or Tab). Screen
-	   readers get all of it from the bars' label instead. */
-	let bars;
-	$effect(() => {
-		const mark = () => {
-			for (const seg of bars.querySelectorAll('.seg')) {
-				const name = seg.firstElementChild;
-				seg.toggleAttribute('data-cut', name.scrollWidth > name.clientWidth + 1);
-			}
-		};
-		const ro = new ResizeObserver(mark);
-		ro.observe(bars);
-		document.fonts?.ready.then(mark); // the web font can change what fits
-		return () => ro.disconnect();
-	});
-
 	let story; // the <dialog>
 	// a click on the backdrop lands on the dialog itself, not its card
 	const onBackdrop = (e) => e.target === story && story.close();
@@ -57,13 +40,8 @@
 					<p class="big">{multiple}×</p>
 					<p class="what">{r.multiple}</p>
 				</div>
-				<!-- focusable so a tap or Tab can show the names the bars
-				     are too thin for; the label carries the whole chart -->
-				<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 				<div
 					class="bars"
-					bind:this={bars}
-					tabindex="0"
 					role="img"
 					aria-label="{r.bars.agency}: {r.bars.work}, {r.bars.markup} and {r.bars.fee}, {multiple} times as long as {r
 						.bars.direct}."
@@ -73,7 +51,6 @@
 						<div class="track">
 							<div class="seg work" style="flex-basis:{(f.direct / agency) * 100}%">
 								<span class="name">{r.bars.work}</span>
-								<span class="tip">{r.bars.work}</span>
 							</div>
 						</div>
 					</div>
@@ -83,7 +60,6 @@
 							{#each segments as s (s.kind)}
 								<div class="seg {s.kind}" style="flex-basis:{(s.v / agency) * 100}%">
 									<span class="name">{r.bars[s.kind]}</span>
-									<span class="tip">{r.bars[s.kind]}</span>
 								</div>
 							{/each}
 						</div>
@@ -180,9 +156,13 @@
 		line-height: 1.15;
 		text-wrap: balance;
 	}
+	/* Short bars with each name inside its part. A part is never
+	   narrower than its name, so the fee is named in full; the
+	   lengths are roughly to scale, not exactly. */
 	.bars {
 		display: grid;
 		gap: 12px;
+		max-width: 460px;
 		margin-top: clamp(22px, 3svh, 40px);
 	}
 	.bar-row {
@@ -198,20 +178,11 @@
 	}
 	.track {
 		display: flex;
-		height: clamp(34px, 5svh, 44px);
-	}
-	.bars:focus {
-		outline: none;
-	}
-	.bars:focus-visible {
-		outline: 2px solid var(--em);
-		outline-offset: 6px;
-		border-radius: 4px;
+		height: clamp(34px, 5svh, 40px);
 	}
 	.seg {
-		position: relative;
-		flex: 0 0 auto;
-		min-width: 0;
+		flex: 0 1 auto; /* the long part gives way to the short ones */
+		min-width: max-content;
 		display: flex;
 		align-items: center;
 		padding: 0 10px;
@@ -219,45 +190,6 @@
 		font-size: 12.5px;
 		font-weight: 700;
 		white-space: nowrap;
-	}
-	.seg .name {
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	/* the name in full, in a tag over its part, in the part's colour */
-	.tip {
-		position: absolute;
-		right: -2px;
-		bottom: calc(100% + 8px);
-		padding: 6px 10px;
-		border-radius: 6px;
-		background: inherit;
-		color: inherit;
-		opacity: 0;
-		transform: translateY(4px);
-		pointer-events: none;
-		transition:
-			opacity 0.18s ease,
-			transform 0.18s ease;
-	}
-	.tip::after {
-		content: '';
-		position: absolute;
-		right: 12px;
-		top: 100%;
-		border: 5px solid transparent;
-		border-top-color: var(--tip, var(--em));
-	}
-	.seg.work .tip::after {
-		--tip: var(--s-white);
-	}
-	.seg.markup .tip::after {
-		--tip: #1d8f63;
-	}
-	.bar-row:hover .seg:global([data-cut]) .tip,
-	.bars:focus .seg:global([data-cut]) .tip {
-		opacity: 1;
-		transform: none;
 	}
 	.seg.work {
 		background: var(--s-white);
@@ -451,17 +383,10 @@
 			grid-template-columns: minmax(0, 1fr);
 			gap: 6px;
 		}
-		.seg {
-			padding: 0 8px;
-			font-size: 12px;
-		}
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.story[open] {
 			animation: none;
-		}
-		.tip {
-			transition: none;
 		}
 	}
 </style>

@@ -35,6 +35,7 @@
 
 	/* The scroll scene, as how far through it (0–1) each step runs. */
 	const LEAVE = [0.02, 0.18]; // the words and the nav fade out
+	const LAND = [0.01, 0.16]; // MARKETING flies onto the die and becomes its name
 	const MORPH = [0.06, 0.4]; // the circuit moves into place
 	const APART = [0.34, 0.8]; // its parts lift off the board
 	const CLAIM = [0.5, 0.76]; // the claim comes in on the left
@@ -82,6 +83,7 @@
 	let scene;
 	let root;
 	let stage;
+	let lands; // the word that flies onto the die
 	let canvas;
 	let sky;
 	let partsBox;
@@ -154,6 +156,8 @@
 		let press = null;
 		let view = null;
 		let cursor = '';
+		let home = null; // where the flying word sits before it flies
+		const out = { named: null }; // where the die's name is drawn
 
 		function resize() {
 			W = stage.clientWidth;
@@ -167,6 +171,11 @@
 			near = pose(focusBox, s, model.bounds);
 			apart = drawing(partsBox, s);
 			behind = parseFloat(getComputedStyle(root).getPropertyValue('--words-behind')) || 0;
+			if (lands) {
+				lands.style.transform = 'none';
+				const r = lands.getBoundingClientRect();
+				home = { x: r.left - s.left + r.width / 2, y: r.top - s.top + r.height / 2, w: r.width };
+			}
 			// the fade centres on the processor where it rests, and stays there
 			project(makeView({ ...rest, px: 0, pz: 0, pull: 1 }), model.core.x, 0, model.core.z, 1, A);
 			root.style.setProperty('--mx', `${A[0].toFixed(1)}px`);
@@ -267,6 +276,7 @@
 			const m = at(MORPH);
 			const x = at(APART);
 			const e = ease(focus);
+			const land = still ? (t > 0.15 ? 1 : 0) : smooth(LAND[0], LAND[1], t);
 			root.style.setProperty('--claim', at(CLAIM).toFixed(3));
 			if (claim) claim.inert = open || at(CLAIM) < 0.5;
 			// where the scroll has it, then from there to facing you as it opens
@@ -282,6 +292,7 @@
 			else if (focus > 0.6 && mod > 0) lit = { cell: -1, lanes: [], cells: ringCells.get(mod) };
 			// opened from the second screen, the parts settle back onto the board
 			const guides = smooth(0.3, 0.9, x) * (1 - e);
+			out.named = null;
 			const anchors = drawExploded(ctx, view, model, {
 				p: ease(x) * (1 - e),
 				guides,
@@ -290,7 +301,9 @@
 				glow,
 				wired: LOOK.wired ? 1 : 0,
 				fills: LOOK.fills,
-				mark: { ...c.chip, logo },
+				// the die's name shows once the word has landed on it, or opened
+				mark: { ...c.chip, logo, shown: Math.max(smooth(0.82, 1, land), e) },
+				out,
 				font,
 				em,
 				dpr,
@@ -313,9 +326,30 @@
 				root.toggleAttribute('data-clear', clear);
 			}
 			overlays(e, 1 - at(LEAVE));
+			fly(land, e);
 
 			const want = focus > 0.6 && hover >= 0 ? 'pointer' : '';
 			if (want !== cursor) root.style.cursor = cursor = want;
+		}
+
+		/* MARKETING, the third word, flies onto the die and becomes the
+		   name on it: it moves and shrinks until its width lies along the
+		   name's, takes the die's tilt, turns from the accent to the die's
+		   ink as it crosses onto it, and fades as the name comes up. With
+		   reduced motion it only fades, and the name comes up. */
+		function fly(land, e) {
+			const n = out.named;
+			if (!lands || !home) return;
+			const q = still || !n ? 0 : ease(land);
+			if (n) {
+				const k = n.span / home.w;
+				const m = [lerp(1, n.ux * k, q), lerp(0, n.uy * k, q), lerp(0, n.nx * k, q), lerp(1, n.ny * k, q)];
+				const dx = lerp(0, n.x - home.x, q);
+				const dy = lerp(0, n.y - home.y, q);
+				lands.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) matrix(${m.map((v) => v.toFixed(4)).join(', ')}, 0, 0)`;
+			}
+			lands.style.setProperty('--ink', smooth(0.5, 0.85, land).toFixed(3));
+			lands.style.opacity = ((1 - smooth(0.82, 1, land)) * Math.max(0, 1 - 2 * e)).toFixed(3);
 		}
 
 		/* The page's share of the opening goes to CSS as variables (see
@@ -571,6 +605,7 @@
 
 		const ro = new ResizeObserver(resize);
 		ro.observe(stage);
+		document.fonts?.ready.then(resize); // the word's width changes with the web font
 
 		const io = new IntersectionObserver(([entry]) => {
 			seen = entry.isIntersecting;
@@ -658,6 +693,8 @@
 	<h1 class="words" aria-label="{c.words.join(', ')} {c.chip.name.toLowerCase()}">
 		<span>{c.words[0]}</span>
 		<span>{c.words[1]}</span>
+		<!-- the die's own name: it flies onto the die as the page scrolls -->
+		<span class="lands"><span bind:this={lands}>{c.chip.name}</span></span>
 	</h1>
 
 	<div class="pose rest" bind:this={restBox} aria-hidden="true"></div>
@@ -672,7 +709,7 @@
 		</a>
 		<nav class="links" aria-label="Page">
 			{#each hero.nav as n}
-				<button type="button" onclick={() => goto(n.goto)}>{n.label}</button>
+				<button type="button" onclick={() => goto(n.goto, n.anchor)}>{n.label}</button>
 			{/each}
 		</nav>
 		<a class="jf-s-btn primary small" href={enquiry.href}>{enquiry.label}</a>
@@ -925,20 +962,31 @@
 		font-weight: 900;
 		/* as large as the page allows: INTEGRATED runs about 6.4 times
 		   its size across (6.6 for a margin), and must fit inside the
-		   2rem either side; on short screens the height caps it */
-		font-size: min(calc((100vw - 4rem) / 6.6), 27dvh);
+		   2rem either side; on short screens the height caps it, at
+		   three lines */
+		font-size: min(calc((100vw - 4rem) / 6.6), 21dvh);
 		line-height: 0.8;
 		letter-spacing: -0.05em;
 		text-transform: uppercase;
 		text-align: left;
 		color: var(--s-white);
-		opacity: var(--words);
 	}
 	.words span {
 		display: block;
 	}
 	.words span + span {
 		margin-top: 0.04em;
+	}
+	/* the first two fade as the page scrolls; the third flies (fly()) */
+	.words > span:not(.lands) {
+		opacity: var(--words);
+	}
+	.words .lands > span {
+		display: inline-block;
+		transform-origin: 50% 50%;
+		will-change: transform;
+		/* the accent, turning to the die's ink as it lands on it */
+		color: color-mix(in srgb, rgb(4 24 15) calc(var(--ink, 0) * 100%), var(--em));
 	}
 
 	.stage {
